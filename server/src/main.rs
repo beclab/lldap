@@ -28,36 +28,43 @@ use actix_server::ServerBuilder;
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::TryFutureExt;
 use sea_orm::{Database, DatabaseConnection};
+//use secstr::{SecUtf8};
 use tracing::*;
+use lldap_auth::types::UserId;
+use crate::domain::opaque_handler::OpaqueHandler;
 
 mod domain;
 mod infra;
 
-async fn create_admin_user(handler: &SqlBackendHandler, config: &Configuration) -> Result<()> {
-    let pass_length = config.ldap_user_pass.unsecure().len();
-    assert!(
-        pass_length >= 8,
-        "Minimum password length is 8 characters, got {} characters",
-        pass_length
-    );
+async fn create_admin_user(handler: &SqlBackendHandler, username: UserId, password: String, email: &String) -> Result<()> {
+    //let pass_length = password.len();
     handler
         .create_user(CreateUserRequest {
-            user_id: config.ldap_user_dn.clone(),
-            email: config.ldap_user_email.clone().into(),
+            user_id: username.clone(),
+            email: email.clone().into(),
             display_name: Some("Administrator".to_string()),
             ..Default::default()
         })
-        .and_then(|_| {
-            register_password(handler, config.ldap_user_dn.clone(), &config.ldap_user_pass)
-        })
+        // .and_then(|_| {
+        //     //register_password(handler, username.clone(), password)
+        //
+        // })
         .await
         .context("Error creating admin user")?;
+
+    handler.registration_password(&username,password).await.context("Error set password")?;
+
+    // assert!(
+    //     pass_length >= 8,
+    //     "Minimum password length is 8 characters, got {} characters",
+    //     pass_length
+    // );
     let groups = handler
         .list_groups(Some(GroupRequestFilter::DisplayName("lldap_admin".into())))
         .await?;
     assert_eq!(groups.len(), 1);
     handler
-        .add_user_to_group(&config.ldap_user_dn, groups[0].id)
+        .add_user_to_group(&username, groups[0].id)
         .await
         .context("Error adding admin user to group")
 }
@@ -140,22 +147,27 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
     };
     if !admin_present {
         warn!("Could not find an admin user, trying to create the user \"admin\" with the config-provided password");
-        create_admin_user(&backend_handler, &config)
+        create_admin_user(&backend_handler, config.ldap_user_dn.clone(), config.ldap_user_pass.clone(), &config.ldap_user_email)
+            .await
+            .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
+            .context("while creating the admin user")?;
+        create_admin_user(&backend_handler, config.terminus_user_dn.clone(), config.terminus_user_pass.clone(), &config.terminus_user_email)
             .await
             .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
             .context("while creating the admin user")?;
     } else if config.force_ldap_user_pass_reset {
         warn!("Forcing admin password reset to the config-provided password");
-        register_password(
-            &backend_handler,
-            config.ldap_user_dn.clone(),
-            &config.ldap_user_pass,
-        )
-        .await
-        .context(format!(
-            "while resetting admin password for {}",
-            &config.ldap_user_dn
-        ))?;
+        // register_password(
+        //     &backend_handler,
+        //     config.ldap_user_dn.clone(),
+        //     &config.ldap_user_pass,
+        // )
+        // backend_handler.registration_password( &config.ldap_user_dn, config.ldap_user_pass)
+        // .await
+        // .context(format!(
+        //     "while resetting admin password for {}",
+        //     &config.ldap_user_dn
+        // ))?;
     }
     if config.force_update_private_key || config.force_ldap_user_pass_reset {
         bail!("Restart the server without --force-update-private-key or --force-ldap-user-pass-reset to continue.");

@@ -88,8 +88,14 @@ pub struct Configuration {
     pub ldap_user_dn: UserId,
     #[builder(default)]
     pub ldap_user_email: String,
-    #[builder(default = r#"SecUtf8::from("password")"#)]
-    pub ldap_user_pass: SecUtf8,
+    #[builder(default = r#"String::from("password")"#)]
+    pub ldap_user_pass: String,
+    #[builder(default = r#"UserId::new("terminus")"#)]
+    pub terminus_user_dn: UserId,
+    #[builder(default = r#"String::from("terminus@myterminus.com")"#)]
+    pub terminus_user_email: String,
+    #[builder(default = r#"String::from("password")"#)]
+    pub terminus_user_pass: String,
     #[builder(default = "false")]
     pub force_ldap_user_pass_reset: bool,
     #[builder(default = "false")]
@@ -528,7 +534,7 @@ where
     if config.jwt_secret == SecUtf8::from("secretjwtsecret") {
         println!("WARNING: Default JWT secret used! This is highly unsafe and can allow attackers to log in as admin.");
     }
-    if config.ldap_user_pass == SecUtf8::from("password") {
+    if config.ldap_user_pass == String::from("password") {
         println!("WARNING: Unsecure default admin password is used.");
     }
     if config.smtp_options.tls_required.is_some() {

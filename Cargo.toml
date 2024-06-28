@@ -2,7 +2,6 @@
 members = [
   "server",
   "auth",
-  "app",
   "migration-tool",
   "set-password",
 ]
@@ -14,8 +13,8 @@ resolver = "2"
 [profile.release]
 lto = true
 
-[profile.release.package.lldap_app]
-opt-level = 's'
+#[profile.release.package.lldap_app]
+#opt-level = 's'
 
 [patch.crates-io.opaque-ke]
 git = 'https://github.com/nitnelave/opaque-ke/'

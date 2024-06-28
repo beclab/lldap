@@ -89,6 +89,32 @@ pub mod registration {
         pub server_data: String,
         pub registration_upload: opaque::server::registration::RegistrationUpload,
     }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct ClientSimpleRegisterRequest {
+        pub username: UserId,
+        // pub email: String,
+        // pub display: Option<String>,
+        pub password: String,
+    }
+
+    impl fmt::Debug for crate::registration::ClientSimpleRegisterRequest {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("ClientSimpleRegisterRequest")
+                .field("username", &self.username.as_str())
+                //.field("email", &self.email.as_str())
+                //.field("display", &self.display.as_str())
+                .field("password", &"***********")
+                .finish()
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct ServerRegisterResponse {
+        pub token: String,
+        #[serde(rename = "refreshToken", skip_serializing_if = "Option::is_none")]
+        pub refresh_token: Option<String>,
+    }
 }
 
 /// The messages for the 3-step OPAQUE registration process.

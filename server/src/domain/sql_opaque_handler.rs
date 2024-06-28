@@ -196,6 +196,37 @@ impl OpaqueHandler for SqlOpaqueHandler {
         user_update.update(&self.sql_pool).await?;
         Ok(())
     }
+
+    #[instrument(skip_all, level = "debug", err)]
+    async fn registration_password(
+        &self,
+        username : &UserId,
+        password: String
+    ) -> Result<()> {
+        let mut rng = rand::rngs::OsRng;
+        use registration::*;
+        let registration_start =
+            opaque::client::registration::start_registration(password.as_bytes(), &mut rng)?;
+        let start_response = self
+            .registration_start(ClientRegistrationStartRequest {
+                username : username.clone(),
+                registration_start_request: registration_start.message,
+            })
+            .await?;
+        let registration_finish = opaque::client::registration::finish_registration(
+            registration_start.state,
+            start_response.registration_response,
+            &mut rng,
+        )?;
+        self
+            .registration_finish(ClientRegistrationFinishRequest {
+                server_data: start_response.server_data,
+                registration_upload: registration_finish.message,
+            })
+            .await?;
+
+        Ok(())
+    }
 }
 
 /// Convenience function to set a user's password.
@@ -226,6 +257,7 @@ pub(crate) async fn register_password(
             registration_upload: registration_finish.message,
         })
         .await
+
 }
 
 #[cfg(test)]

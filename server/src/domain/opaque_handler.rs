@@ -18,6 +18,13 @@ pub trait OpaqueHandler: Send + Sync {
         &self,
         request: registration::ClientRegistrationFinishRequest,
     ) -> Result<()>;
+
+    async fn registration_password(
+        &self,
+        //request: registration::ClientSimpleRegisterRequest,
+        username : &UserId,
+        password: String
+    ) -> Result<()>;
 }
 
 #[cfg(test)]

@@ -21,6 +21,12 @@ if [[ ! -r "$CONFIG_FILE" ]]; then
   exit 1;
 fi
 
+APP_OUTPUT=$(ls /app)
+echo "$APP_OUTPUT"
+
+DATA_OUTPUT=$(ls /data)
+echo "$DATA_OUTPUT"
+
 echo "> Setup permissions.."
 find /app \! -user "$UID" -exec chown "$UID:$GID" '{}' +
 find /data \! -user "$UID" -exec chown "$UID:$GID" '{}' +
@@ -28,6 +34,8 @@ find /data \! -user "$UID" -exec chown "$UID:$GID" '{}' +
 
 echo "> Starting lldap.."
 echo ""
-exec gosu "$UID:$GID" /app/lldap "$@"
+#exec gosu "$UID:$GID" /app/lldap "$@"
+
+exec /app/lldap "$@"
 
 exec "$@"

@@ -449,6 +449,70 @@ where
         .unwrap_or_else(error_to_http_response)
 }
 
+#[instrument(skip_all, level = "debug")]
+async fn simple_register<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: actix_web::web::Payload,
+    request: actix_web::HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    use actix_web::FromRequest;
+    let inner_payload = &mut payload.into_inner();
+    let validation_result = BearerAuth::from_request(&request, inner_payload)
+        .await
+        .ok()
+        .and_then(|bearer| check_if_token_is_valid(&data, bearer.token()).ok())
+        .ok_or_else(|| {
+            TcpError::UnauthorizedError("Not authorized to change the user's password".to_string())
+        })?;
+    let registration_start_request =
+        web::Json::<registration::ClientSimpleRegisterRequest>::from_request(
+            &request,
+            inner_payload,
+        )
+            .await
+            .map_err(|e| TcpError::BadRequest(format!("{:#?}", e)))?
+            .into_inner();
+
+    let user_id = &registration_start_request.username;
+    let user_is_admin = data
+        .get_readonly_handler()
+        .get_user_groups(user_id)
+        .await?
+        .iter()
+        .any(|g| g.display_name == "lldap_admin".into());
+    if !validation_result.can_change_password(user_id, user_is_admin) {
+        return Err(TcpError::UnauthorizedError(
+            "Not authorized to change the user's password".to_string(),
+        ));
+    }
+
+    let pass_length = registration_start_request.password.len();
+    assert!(
+        pass_length >= 8,
+        "Minimum password length is 8 characters, got {} characters",
+        pass_length
+    );
+
+    data.get_opaque_handler().registration_password(&registration_start_request.username,registration_start_request.password.to_string()).await?;
+    get_login_successful_response(&data, &registration_start_request.username).await
+}
+
+async fn simple_register_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: actix_web::web::Payload,
+    request: actix_web::HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    simple_register(data, payload,request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
 #[instrument(skip_all, level = "debug", fields(name = %request.name))]
 async fn post_authorize<Backend>(
     data: web::Data<AppState<Backend>>,
@@ -662,6 +726,9 @@ where
         )
         .service(web::resource("/refresh").route(web::get().to(get_refresh_handler::<Backend>)))
         .service(web::resource("/logout").route(web::get().to(get_logout_handler::<Backend>)))
+        .service(
+            web::resource("/simple/register").route(web::post().to(simple_register_handler::<Backend>)),
+        )
         .service(
             web::scope("/opaque/register")
                 .wrap(CookieToHeaderTranslatorFactory)

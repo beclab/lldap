@@ -12,7 +12,7 @@ use crate::{
         tcp_backend_handler::*,
     },
 };
-use actix_files::Files;
+//use actix_files::Files;
 use actix_http::{header, HttpServiceBuilder};
 use actix_server::ServerBuilder;
 use actix_service::map_config;
@@ -77,33 +77,33 @@ pub(crate) fn error_to_http_response(error: TcpError) -> HttpResponse {
     .body(error.to_string())
 }
 
-async fn main_js_handler<Backend>(
-    data: web::Data<AppState<Backend>>,
-) -> actix_web::Result<impl Responder> {
-    let mut file = std::fs::read_to_string(r"./app/static/main.js")?;
+// async fn main_js_handler<Backend>(
+//     data: web::Data<AppState<Backend>>,
+// ) -> actix_web::Result<impl Responder> {
+//     let mut file = std::fs::read_to_string(r"./app/static/main.js")?;
+//
+//     if data.server_url.path() != "/" {
+//         file = file.replace("/pkg/", format!("{}/pkg/", data.server_url.path()).as_str());
+//     }
+//
+//     Ok(file
+//         .customize()
+//         .insert_header((header::CONTENT_TYPE, "text/javascript")))
+// }
 
-    if data.server_url.path() != "/" {
-        file = file.replace("/pkg/", format!("{}/pkg/", data.server_url.path()).as_str());
-    }
+// async fn wasm_handler() -> actix_web::Result<impl Responder> {
+//     Ok(actix_files::NamedFile::open_async("./app/pkg/lldap_app_bg.wasm").await?)
+// }
 
-    Ok(file
-        .customize()
-        .insert_header((header::CONTENT_TYPE, "text/javascript")))
-}
-
-async fn wasm_handler() -> actix_web::Result<impl Responder> {
-    Ok(actix_files::NamedFile::open_async("./app/pkg/lldap_app_bg.wasm").await?)
-}
-
-async fn wasm_handler_compressed() -> actix_web::Result<impl Responder> {
-    Ok(
-        actix_files::NamedFile::open_async("./app/pkg/lldap_app_bg.wasm.gz")
-            .await?
-            .customize()
-            .insert_header(header::ContentEncoding::Gzip)
-            .insert_header((header::CONTENT_TYPE, "application/wasm")),
-    )
-}
+// async fn wasm_handler_compressed() -> actix_web::Result<impl Responder> {
+//     Ok(
+//         actix_files::NamedFile::open_async("./app/pkg/lldap_app_bg.wasm.gz")
+//             .await?
+//             .customize()
+//             .insert_header(header::ContentEncoding::Gzip)
+//             .insert_header((header::CONTENT_TYPE, "application/wasm")),
+//     )
+// }
 
 fn http_config<Backend>(
     cfg: &mut web::ServiceConfig,
@@ -137,17 +137,17 @@ fn http_config<Backend>(
             .wrap(auth_service::CookieToHeaderTranslatorFactory)
             .configure(super::graphql::api::configure_endpoint::<Backend>),
     )
-    .service(
-        web::resource("/pkg/lldap_app_bg.wasm.gz").route(web::route().to(wasm_handler_compressed)),
-    )
-    .service(web::resource("/pkg/lldap_app_bg.wasm").route(web::route().to(wasm_handler)))
-    .service(web::resource("/static/main.js").route(web::route().to(main_js_handler::<Backend>)))
-    // Serve the /pkg path with the compiled WASM app.
-    .service(Files::new("/pkg", "./app/pkg"))
-    // Serve static files
-    .service(Files::new("/static", "./app/static"))
-    // Serve static fonts
-    .service(Files::new("/static/fonts", "./app/static/fonts"))
+    // .service(
+    //     web::resource("/pkg/lldap_app_bg.wasm.gz").route(web::route().to(wasm_handler_compressed)),
+    // )
+    // .service(web::resource("/pkg/lldap_app_bg.wasm").route(web::route().to(wasm_handler)))
+    // .service(web::resource("/static/main.js").route(web::route().to(main_js_handler::<Backend>)))
+    // // Serve the /pkg path with the compiled WASM app.
+    // .service(Files::new("/pkg", "./app/pkg"))
+    // // Serve static files
+    // .service(Files::new("/static", "./app/static"))
+    // // Serve static fonts
+    // .service(Files::new("/static/fonts", "./app/static/fonts"))
     // Default to serve index.html for unknown routes, to support routing.
     .default_service(web::route().guard(guard::Get()).to(index::<Backend>));
 }
