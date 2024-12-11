@@ -226,8 +226,8 @@ pub mod types {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JWTClaims {
-    pub exp: DateTime<Utc>,
-    pub iat: DateTime<Utc>,
+    pub exp: i64,
+    pub iat: i64,
     pub user: String,
     pub groups: HashSet<String>,
 }
