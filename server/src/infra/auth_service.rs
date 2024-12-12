@@ -58,7 +58,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     let claims = JWTClaims {
         exp: exp_utc.timestamp(),
         iat: Utc::now().timestamp(),
-        user: user.to_string(),
+        username: user.to_string(),
         groups: groups
             .into_iter()
             .map(|g| g.display_name.into_string())
@@ -702,7 +702,7 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
         return Err(ErrorUnauthorized("JWT was logged out"));
     }
     Ok(state.backend_handler.get_permissions_from_groups(
-        UserId::new(&token.claims().user),
+        UserId::new(&token.claims().username),
         token
             .claims()
             .groups

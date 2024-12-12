@@ -78,6 +78,13 @@ impl TcpBackendHandler for SqlBackendHandler {
             expiry_date,
         }
         .into_active_model();
+        let existing_hash = model::jwt_storage::Entity::find()
+            .filter(model::jwt_storage::Column::JwtHash.eq(jwt_hash as i64))
+            .one(&self.sql_pool)
+            .await?;
+        if existing_hash.is_some() {
+            return Ok(());
+        }
         new_token.insert(&self.sql_pool).await?;
         Ok(())
     }

@@ -228,6 +228,6 @@ pub mod types {
 pub struct JWTClaims {
     pub exp: i64,
     pub iat: i64,
-    pub user: String,
+    pub username: String,
     pub groups: HashSet<String>,
 }
