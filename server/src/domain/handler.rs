@@ -193,6 +193,7 @@ pub trait GroupListerBackendHandler: ReadSchemaBackendHandler {
 #[async_trait]
 pub trait GroupBackendHandler: ReadSchemaBackendHandler {
     async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails>;
+    async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails>;
     async fn update_group(&self, request: UpdateGroupRequest) -> Result<()>;
     async fn create_group(&self, request: CreateGroupRequest) -> Result<GroupId>;
     async fn delete_group(&self, group_id: GroupId) -> Result<()>;

@@ -16,6 +16,7 @@ use sea_orm::{
 };
 use tracing::instrument;
 
+
 fn attribute_condition(name: AttributeName, value: Serialized) -> Cond {
     Expr::in_subquery(
         Expr::col(GroupColumn::GroupId.as_column_ref()),
@@ -144,7 +145,23 @@ impl GroupBackendHandler for SqlBackendHandler {
             .one(&self.sql_pool)
             .await?
             .map(Into::<GroupDetails>::into)
-            .ok_or_else(|| DomainError::EntityNotFound(format!("{:?}", group_id)))?;
+            .ok_or_else(|| DomainError::EntityNotFound(format!("No such group {:?}", group_id)))?;
+        let attributes = model::GroupAttributes::find()
+            .filter(model::GroupAttributesColumn::GroupId.eq(group_details.group_id))
+            .order_by_asc(model::GroupAttributesColumn::AttributeName)
+            .all(&self.sql_pool)
+            .await?;
+        group_details.attributes = attributes.into_iter().map(AttributeValue::from).collect();
+        Ok(group_details)
+    }
+
+    #[instrument(skip(self), level = "debug", ret, err)]
+    async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails> {
+        let mut group_details = model::Group::find().filter(model::groups::Column::DisplayName.eq(group_name.clone()))
+            .one(&self.sql_pool)
+            .await?
+            .map(Into::<GroupDetails>::into)
+            .ok_or_else(|| DomainError::EntityNotFound(format!("No such group name={:?}", group_name.clone())))?;
         let attributes = model::GroupAttributes::find()
             .filter(model::GroupAttributesColumn::GroupId.eq(group_details.group_id))
             .order_by_asc(model::GroupAttributesColumn::AttributeName)
@@ -172,12 +189,17 @@ impl GroupBackendHandler for SqlBackendHandler {
         let uuid = Uuid::from_name_and_date(request.display_name.as_str(), &now);
         let lower_display_name = request.display_name.as_str().to_lowercase();
         let new_group = model::groups::ActiveModel {
-            display_name: Set(request.display_name),
+            display_name: Set(request.display_name.clone()),
             lowercase_display_name: Set(lower_display_name),
             creation_date: Set(now),
             uuid: Set(uuid),
             ..Default::default()
         };
+        let exist_group = model::Group::find().filter(model::groups::Column::DisplayName.eq(request.display_name.clone()))
+            .one(&self.sql_pool).await?;
+        if exist_group.is_some() {
+            return Err(DomainError::EntityAlreadyExists(format!("group {:?}", request.display_name.clone())));
+        }
         Ok(self
             .sql_pool
             .transaction::<_, GroupId, DomainError>(|transaction| {

@@ -56,7 +56,16 @@ impl GroupDetails {
             "Error trying to fetch group details",
         );
     }
-
+    fn get_group_details_by_name(&mut self, ctx: &Context<Self>) {
+        self.common.call_graphql::<GetGroupDetails, _>(
+            ctx,
+            get_group_details::Variables {
+                id: ctx.props().display_name,
+            },
+            Msg::GroupDetailsResponse,
+            "Error trying to fetch group details",
+        );
+    }
     fn view_messages(&self, error: &Option<Error>) -> Html {
         if let Some(e) = error {
             html! {

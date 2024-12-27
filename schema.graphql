@@ -57,6 +57,7 @@ type Query {
   users(filters: RequestFilter): [User!]!
   groups: [Group!]!
   group(groupId: Int!): Group!
+  groupByName(groupName: String!): Group!
   schema: Schema!
 }
 

@@ -15,6 +15,7 @@ use actix_web::FromRequest;
 use actix_web::HttpMessage;
 use actix_web::{error::JsonPayloadError, web, Error, HttpRequest, HttpResponse};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
+use http::StatusCode;
 use juniper::{
     http::{
         graphiql::graphiql_source, playground::playground_source, GraphQLBatchRequest,
@@ -23,6 +24,8 @@ use juniper::{
     EmptySubscription, FieldError, RootNode, ScalarValue,
 };
 use tracing::debug;
+use crate::infra::graphql::error::create_custom_error;
+use crate::infra::graphql::status::StatusReason;
 
 pub struct Context<Handler: BackendHandler> {
     pub handler: AccessControlledBackendHandler<Handler>,
@@ -35,7 +38,11 @@ pub fn field_error_callback<'a>(
 ) -> impl 'a + FnOnce() -> FieldError {
     move || {
         span.in_scope(|| debug!("Unauthorized"));
-        FieldError::from(error_message)
+        create_custom_error(
+        StatusCode::FORBIDDEN.as_u16() as i32,
+        StatusReason::Forbidden.as_str(),
+        error_message,
+        )
     }
 }
 

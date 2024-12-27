@@ -67,6 +67,7 @@ pub(crate) fn error_to_http_response(error: TcpError) -> HttpResponse {
             | DomainError::UnknownCryptoError(_) => HttpResponse::InternalServerError(),
             DomainError::Base64DecodeError(_)
             | DomainError::BinarySerializationError(_)
+            | DomainError::EntityAlreadyExists(_)
             | DomainError::EntityNotFound(_) => HttpResponse::BadRequest(),
         },
         TcpError::BadRequest(_) => HttpResponse::BadRequest(),
