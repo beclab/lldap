@@ -54,16 +54,17 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     user: &UserId,
     groups: HashSet<GroupDetails>,
 ) -> SignedToken {
+    let exp_utc = Utc::now() + chrono::Duration::days(1);
     let claims = JWTClaims {
-        exp: Utc::now() + chrono::Duration::days(1),
-        iat: Utc::now(),
-        user: user.to_string(),
+        exp: exp_utc.timestamp(),
+        iat: Utc::now().timestamp(),
+        username: user.to_string(),
         groups: groups
             .into_iter()
             .map(|g| g.display_name.into_string())
             .collect(),
     };
-    let expiry = claims.exp.naive_utc();
+    let expiry = exp_utc.naive_utc();
     let header = jwt::Header {
         algorithm: jwt::AlgorithmType::Hs512,
         ..Default::default()
@@ -685,7 +686,9 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
 ) -> Result<ValidationResults, actix_web::Error> {
     let token: Token<_> = VerifyWithKey::verify_with_key(token_str, &state.jwt_key)
         .map_err(|_| ErrorUnauthorized("Invalid JWT"))?;
-    if token.claims().exp.lt(&Utc::now()) {
+    let naive_datetime:NaiveDateTime = NaiveDateTime::from_timestamp_opt(token.claims().exp,0).unwrap();
+    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime,Utc);
+    if exp_utc.lt(&Utc::now()) {
         return Err(ErrorUnauthorized("Expired JWT"));
     }
     if token.header().algorithm != jwt::AlgorithmType::Hs512 {
@@ -699,7 +702,7 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
         return Err(ErrorUnauthorized("JWT was logged out"));
     }
     Ok(state.backend_handler.get_permissions_from_groups(
-        UserId::new(&token.claims().user),
+        UserId::new(&token.claims().username),
         token
             .claims()
             .groups
