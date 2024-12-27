@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::infra::graphql::error::create_custom_error;
 
 use crate::{
     domain::{
@@ -19,6 +20,9 @@ use chrono::{NaiveDateTime, TimeZone};
 use juniper::{graphql_object, FieldError, FieldResult, GraphQLInputObject};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, Instrument, Span};
+use crate::domain::error::DomainError;
+use crate::infra::graphql::status::StatusReason;
+use actix_http::StatusCode;
 
 type DomainRequestFilter = crate::domain::handler::UserRequestFilter;
 type DomainUser = crate::domain::types::User;
@@ -142,8 +146,17 @@ impl<Handler: BackendHandler> Query<Handler> {
                 &span,
                 "Unauthorized access to user data",
             ))?;
+
         let schema = Arc::new(self.get_schema(context, span.clone()).await?);
-        let user = handler.get_user_details(&user_id).instrument(span).await?;
+        let user = handler.get_user_details(&user_id).instrument(span).await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         User::<Handler>::from_user(user, schema)
     }
 
@@ -208,7 +221,44 @@ impl<Handler: BackendHandler> Query<Handler> {
         let group_details = handler
             .get_group_details(GroupId(group_id))
             .instrument(span)
-            .await?;
+            .await
+        .map_err(|e| match e {
+            DomainError::EntityNotFound(_) => create_custom_error(
+                StatusCode::NOT_FOUND.as_u16() as i32,
+                StatusReason::NotFound.as_str(),
+                e.to_string().as_str(),
+            ),
+            _ => e.into(),
+        })?;
+
+        Group::<Handler>::from_group_details(group_details, schema.clone())
+    }
+
+    async fn group_by_name(context: &Context<Handler>, group_name: String) -> FieldResult<Group<Handler>> {
+        let span = debug_span!("[GraphQL query] group");
+        span.in_scope(|| {
+            debug!(?group_name);
+        });
+        let handler = context
+            .get_readonly_handler()
+            .ok_or_else(field_error_callback(
+                &span,
+                "Unauthorized access to group data",
+            ))?;
+        let schema = Arc::new(self.get_schema(context, span.clone()).await?);
+        let group_details = handler
+            .get_group_details_by_name(group_name)
+            .instrument(span)
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
+
         Group::<Handler>::from_group_details(group_details, schema.clone())
     }
 
@@ -349,7 +399,15 @@ impl<Handler: BackendHandler> User<Handler> {
         let domain_groups = handler
             .get_user_groups(&self.user.user_id)
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         let mut groups = domain_groups
             .into_iter()
             .map(|g| Group::<Handler>::from_group_details(g, self.schema.clone()))

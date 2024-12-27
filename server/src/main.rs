@@ -12,7 +12,6 @@ use crate::{
             GroupRequestFilter, UserBackendHandler, UserListerBackendHandler, UserRequestFilter,
         },
         sql_backend_handler::SqlBackendHandler,
-        sql_opaque_handler::register_password,
         sql_tables::{get_private_key_info, set_private_key_info},
     },
     infra::{

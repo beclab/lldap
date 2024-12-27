@@ -90,6 +90,7 @@ pub trait ReadonlyBackendHandler: UserReadableBackendHandler {
     ) -> Result<Vec<UserAndGroups>>;
     async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>>;
     async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails>;
+    async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails>;
 }
 
 #[async_trait]
@@ -150,6 +151,9 @@ impl<Handler: BackendHandler> ReadonlyBackendHandler for Handler {
     }
     async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails> {
         <Handler as GroupBackendHandler>::get_group_details(self, group_id).await
+    }
+    async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails> {
+        <Handler as GroupBackendHandler>::get_group_details_by_name(self, group_name).await
     }
 }
 

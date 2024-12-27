@@ -22,8 +22,12 @@ use crate::{
 };
 use anyhow::{anyhow, Context as AnyhowContext};
 use base64::Engine;
+use http::StatusCode;
 use juniper::{graphql_object, FieldResult, GraphQLInputObject, GraphQLObject};
 use tracing::{debug, debug_span, Instrument, Span};
+use crate::domain::error::DomainError;
+use crate::infra::graphql::error::create_custom_error;
+use crate::infra::graphql::status::StatusReason;
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -160,7 +164,15 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 attributes,
             })
             .instrument(span.clone())
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityAlreadyExists(_) => create_custom_error(
+                    StatusCode::CONFLICT.as_u16() as i32,
+                    StatusReason::AlreadyExists.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
     }
@@ -239,7 +251,15 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 insert_attributes,
             })
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         Ok(Success::new())
     }
 
@@ -300,7 +320,16 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         handler
             .add_user_to_group(&UserId::new(&user_id), GroupId(group_id))
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityAlreadyExists(_) => create_custom_error(
+                    StatusCode::CONFLICT.as_u16() as i32,
+                    StatusReason::AlreadyExists.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
+
         Ok(Success::new())
     }
 
@@ -363,7 +392,15 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         handler
             .delete_group(GroupId(group_id))
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         Ok(Success::new())
     }
 
@@ -595,7 +632,16 @@ async fn create_group_with_details<Handler: BackendHandler>(
         display_name: request.display_name.into(),
         attributes,
     };
-    let group_id = handler.create_group(request).await?;
+    let group_id = handler.create_group(request).await
+        .map_err(|e| match e {
+            DomainError::EntityAlreadyExists(_) => create_custom_error(
+                StatusCode::CONFLICT.as_u16() as i32,
+                StatusReason::AlreadyExists.as_str(),
+                e.to_string().as_str(),
+            ),
+            _ => e.into(),
+        })?;
+
     let group_details = handler.get_group_details(group_id).instrument(span).await?;
     super::query::Group::<Handler>::from_group_details(group_details, Arc::new(schema))
 }

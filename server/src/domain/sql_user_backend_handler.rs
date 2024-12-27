@@ -272,7 +272,7 @@ impl UserBackendHandler for SqlBackendHandler {
             model::User::find_by_id(user_id.to_owned())
                 .one(&self.sql_pool)
                 .await?
-                .ok_or_else(|| DomainError::EntityNotFound(user_id.to_string()))?,
+                .ok_or_else(|| DomainError::EntityNotFound(format!("No such user {:?}",user_id.to_string())))?,
         );
         let attributes = model::UserAttributes::find()
             .filter(model::UserAttributesColumn::UserId.eq(user_id))
@@ -288,7 +288,7 @@ impl UserBackendHandler for SqlBackendHandler {
         let user = model::User::find_by_id(user_id.to_owned())
             .one(&self.sql_pool)
             .await?
-            .ok_or_else(|| DomainError::EntityNotFound(user_id.to_string()))?;
+            .ok_or_else(|| DomainError::EntityNotFound(format!("No such user {:?}",user_id.to_string())))?;
         Ok(HashSet::from_iter(
             user.find_linked(model::memberships::UserToGroup)
                 .all(&self.sql_pool)
@@ -334,6 +334,15 @@ impl UserBackendHandler for SqlBackendHandler {
                 value: Set(Serialized::from(&avatar)),
             });
         }
+
+        let exist_user = model::User::find_by_id(request.user_id.clone())
+            .one(&self.sql_pool)
+            .await?;
+        if exist_user.is_some() {
+            return Err(DomainError::EntityAlreadyExists(format!("user {:?}", request.user_id.as_str())));
+        }
+
+
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(async move {
@@ -372,6 +381,13 @@ impl UserBackendHandler for SqlBackendHandler {
 
     #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
     async fn update_user(&self, request: UpdateUserRequest) -> Result<()> {
+
+        let exist_user = model::User::find_by_id(request.user_id.clone())
+            .one(&self.sql_pool).await?;
+        if exist_user.is_none() {
+            return Err(DomainError::EntityNotFound(format!("No such user {:?}", request.user_id.as_str())));
+        }
+
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(
@@ -398,10 +414,19 @@ impl UserBackendHandler for SqlBackendHandler {
 
     #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str(), group_id))]
     async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()> {
+        let exist_membership = model::Membership::find().filter(model::memberships::Column::UserId.eq(user_id))
+            .filter(model::memberships::Column::GroupId.eq(group_id))
+            .one(&self.sql_pool)
+            .await?;
+        if exist_membership.is_some() {
+            return Err(DomainError::EntityAlreadyExists(format!("membership {:?},{:?}", user_id.as_str(),group_id)));
+        }
+
         let new_membership = model::memberships::ActiveModel {
             user_id: ActiveValue::Set(user_id.clone()),
             group_id: ActiveValue::Set(group_id),
         };
+
         new_membership.insert(&self.sql_pool).await?;
         Ok(())
     }

@@ -19,6 +19,8 @@ pub enum DomainError {
     Base64DecodeError(#[from] base64::DecodeError),
     #[error("Entity not found: `{0}`")]
     EntityNotFound(String),
+    #[error("Entity already exists: `{0:?}`")]
+    EntityAlreadyExists(String),
     #[error("Internal error: `{0}`")]
     InternalError(String),
 }
