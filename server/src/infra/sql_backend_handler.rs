@@ -7,12 +7,10 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use sea_orm::{
-    sea_query::{Cond, Expr},
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QuerySelect,
-};
+use sea_orm::{sea_query::{Cond, Expr}, ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter, QuerySelect, Set};
 use std::collections::HashSet;
 use tracing::{debug, instrument};
+use crate::infra::auth_service::LoginRecord;
 
 fn gen_random_string(len: usize) -> String {
     use rand::{distributions::Alphanumeric, rngs::SmallRng, Rng, SeedableRng};
@@ -181,5 +179,23 @@ impl TcpBackendHandler for SqlBackendHandler {
             )));
         }
         Ok(())
+    }
+
+    #[instrument(skip_all, level = "debug")]
+    async fn create_login_record(&self, record: &LoginRecord) -> Result<()> {
+        debug!(?record);
+        let now = chrono::Utc::now().naive_utc();
+        let login_record = model::login_record::ActiveModel {
+            user_id: Set(record.user_id.clone()),
+            success: Set(record.success),
+            reason: Set(record.reason.to_string()),
+            source_ip: Set(record.source_ip.to_string()),
+            user_agent: Set(record.user_agent.to_string()),
+            creation_date: Set(now),
+            id: NotSet
+        }.into_active_model();
+        login_record.insert(&self.sql_pool).await?;
+        Ok(())
+
     }
 }

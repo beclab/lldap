@@ -102,6 +102,18 @@ pub enum GroupObjectClasses {
     ObjectClass,
 }
 
+#[derive(DeriveIden, PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum LoginRecord {
+    Table,
+    Id,
+    UserId,
+    Success,
+    Reason,
+    SourceIp,
+    UserAgent,
+    CreationDate,
+}
+
 // Metadata about the SQL DB.
 #[derive(DeriveIden)]
 pub enum Metadata {
@@ -1131,6 +1143,58 @@ async fn migrate_to_v10(transaction: DatabaseTransaction) -> Result<DatabaseTran
     Ok(transaction)
 }
 
+async fn migrate_to_v11(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
+    let builder = transaction.get_database_backend();
+    if let Err(e) = transaction
+        .execute(
+            builder.build(
+                Table::create()
+                    .table(LoginRecord::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(LoginRecord::Id)
+                            .integer()
+                            .auto_increment()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(LoginRecord::UserId)
+                             .string_len(255)
+                             .not_null(),
+                    )
+                    .col(ColumnDef::new(LoginRecord::Success)
+                             .boolean()
+                             .not_null(),
+                    )
+                    .col(ColumnDef::new(LoginRecord::Reason)
+                             .string_len(255)
+                             .not_null(),
+                    )
+                    .col(ColumnDef::new(LoginRecord::SourceIp)
+                        .string_len(255)
+                    )
+                    .col(ColumnDef::new(LoginRecord::UserAgent)
+                        .string_len(1024)
+                    )
+                    .col(ColumnDef::new(Users::CreationDate).
+                        date_time()
+                        .not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("LoginRecordUserForeignKey")
+                            .from(LoginRecord::Table, LoginRecord::UserId)
+                            .to(Users::Table, LoginRecord::UserId)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+            ),
+        )
+        .await {
+        error!("failed to migrate to v11,{}",e);
+        return Err(e);
+    }
+    Ok(transaction)
+}
+
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
     ($l:ident) => {
@@ -1161,6 +1225,8 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v8),
         to_sync!(migrate_to_v9),
         to_sync!(migrate_to_v10),
+        to_sync!(migrate_to_v11),
+
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

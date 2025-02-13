@@ -21,6 +21,7 @@ use sea_orm::{
 };
 use std::collections::HashSet;
 use tracing::instrument;
+use crate::domain::types::LoginRecord;
 
 fn attribute_condition(name: AttributeName, value: Serialized) -> Cond {
     Expr::in_subquery(
@@ -296,6 +297,16 @@ impl UserBackendHandler for SqlBackendHandler {
                 .into_iter()
                 .map(Into::<GroupDetails>::into),
         ))
+    }
+
+    #[instrument(skip_all, level = "debug", ret, err, fields(user_id = ?user_id.as_str()))]
+    async fn get_login_records(&self, user_id: &UserId) -> Result<Vec<LoginRecord>> {
+        let records = model::LoginRecord::find()
+            .filter(model::LoginRecordColumn::UserId.eq(user_id))
+            .order_by_desc(model::LoginRecordColumn::CreationDate)
+            .all(&self.sql_pool)
+            .await?;
+        Ok(records.into_iter().map(LoginRecord::from).collect())
     }
 
     #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
