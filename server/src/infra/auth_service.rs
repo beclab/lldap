@@ -64,7 +64,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     user: &UserId,
     groups: HashSet<GroupDetails>,
 ) -> SignedToken {
-    let exp_utc = Utc::now() + chrono::Duration::days(1);
+    let exp_utc = Utc::now() + chrono::Duration::days(365);
     let claims = JWTClaims {
         exp: exp_utc.timestamp(),
         iat: Utc::now().timestamp(),
