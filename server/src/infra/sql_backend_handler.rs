@@ -50,7 +50,7 @@ impl TcpBackendHandler for SqlBackendHandler {
             refresh_token.hash(&mut s);
             s.finish()
         };
-        let duration = chrono::Duration::days(30);
+        let duration = chrono::Duration::days(365);
         let new_token = model::jwt_refresh_storage::Model {
             refresh_token_hash: refresh_token_hash as i64,
             user_id: user.clone(),
