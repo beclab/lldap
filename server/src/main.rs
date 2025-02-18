@@ -133,6 +133,7 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
     ensure_group_exists(&backend_handler, "lldap_admin").await?;
     ensure_group_exists(&backend_handler, "lldap_password_manager").await?;
     ensure_group_exists(&backend_handler, "lldap_strict_readonly").await?;
+    ensure_group_exists(&backend_handler, "lldap_regular").await?;
     let admin_present = if let Ok(admins) = backend_handler
         .list_users(
             Some(UserRequestFilter::MemberOf("lldap_admin".into())),
