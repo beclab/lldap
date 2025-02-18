@@ -14,7 +14,7 @@ use crate::domain::{
     schema::PublicSchema,
     types::{
         AttributeName, Group, GroupDetails, GroupId, GroupName, LdapObjectClass, User,
-        UserAndGroups, UserId,
+        UserAndGroups, UserId,LoginRecord
     },
 };
 
@@ -91,6 +91,8 @@ pub trait ReadonlyBackendHandler: UserReadableBackendHandler {
     async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>>;
     async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails>;
     async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails>;
+
+    async fn get_login_records(&self, user_id: &UserId) -> Result<Vec<LoginRecord>>;
 }
 
 #[async_trait]
@@ -154,6 +156,9 @@ impl<Handler: BackendHandler> ReadonlyBackendHandler for Handler {
     }
     async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails> {
         <Handler as GroupBackendHandler>::get_group_details_by_name(self, group_name).await
+    }
+    async fn get_login_records(&self, user_id: &UserId) -> Result<Vec<LoginRecord>> {
+        <Handler as UserBackendHandler>::get_login_records(self, user_id).await
     }
 }
 

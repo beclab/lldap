@@ -520,6 +520,16 @@ pub struct Group {
     pub attributes: Vec<AttributeValue>,
 }
 
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct LoginRecord {
+    pub user_id: UserId,
+    pub success: bool,
+    pub reason: String,
+    pub source_ip: String,
+    pub user_agent: String,
+    pub creation_date: NaiveDateTime,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GroupDetails {
     pub group_id: GroupId,

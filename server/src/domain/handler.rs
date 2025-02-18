@@ -9,6 +9,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use crate::domain::types::LoginRecord;
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct BindRequest {
@@ -217,6 +218,7 @@ pub trait UserBackendHandler: ReadSchemaBackendHandler {
     async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
     async fn remove_user_from_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
     async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>>;
+    async fn get_login_records(&self, user_id: &UserId) -> Result<Vec<LoginRecord>>;
 }
 
 #[async_trait]

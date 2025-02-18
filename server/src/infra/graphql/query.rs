@@ -27,6 +27,7 @@ use actix_http::StatusCode;
 type DomainRequestFilter = crate::domain::handler::UserRequestFilter;
 type DomainUser = crate::domain::types::User;
 type DomainGroup = crate::domain::types::Group;
+type DomainLoginRecord = crate::domain::types::LoginRecord;
 type DomainUserAndGroups = crate::domain::types::UserAndGroups;
 type DomainAttributeList = crate::domain::handler::AttributeList;
 type DomainAttributeSchema = crate::domain::handler::AttributeSchema;
@@ -204,6 +205,24 @@ impl<Handler: BackendHandler> Query<Handler> {
             .into_iter()
             .map(|g| Group::<Handler>::from_group(g, schema.clone()))
             .collect()
+    }
+
+    async fn login_records(context: &Context<Handler>, user_id: String) -> FieldResult<Vec<LoginRecord<Handler>>> {
+        let span = debug_span!("[GraphQL query] login records");
+        let handler = context
+            .get_readonly_handler()
+            .ok_or_else(field_error_callback(
+                &span,
+                "Unauthorized access to group list",
+            ))?;
+        let user_id = urlencoding::decode(&user_id).context("Invalid user parameter")?;
+        let user_id = UserId::new(&user_id);
+        let schema = Arc::new(self.get_schema(context, span.clone()).await?);
+        let domain_records = handler.get_login_records(&user_id).instrument(span).await?;
+        domain_records.into_iter()
+            .map(|l| LoginRecord::<Handler>::from_user_login_record(l,schema.clone()))
+            .collect()
+        // Ok(domain_records)
     }
 
     async fn group(context: &Context<Handler>, group_id: i32) -> FieldResult<Group<Handler>> {
@@ -531,6 +550,79 @@ impl<Handler: BackendHandler> Group<Handler> {
             .map(|u| User::<Handler>::from_user_and_groups(u, self.schema.clone()))
             .collect()
     }
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct LoginRecord<Handler: BackendHandler> {
+    user_id: UserId,
+    success: bool,
+    reason: String,
+    source_ip: String,
+    user_agent: String,
+    creation_date: chrono::NaiveDateTime,
+    // attributes: Vec<AttributeValue<Handler>>,
+    schema: Arc<PublicSchema>,
+    _phantom: std::marker::PhantomData<Box<Handler>>,
+}
+
+impl<Handler: BackendHandler> LoginRecord<Handler> {
+    pub fn from_user_login_record(
+        record: DomainLoginRecord,
+        schema: Arc<PublicSchema>,
+    ) -> FieldResult<LoginRecord<Handler>> {
+        Ok(Self {
+            user_id: record.user_id,
+            success: record.success,
+            reason: record.reason,
+            source_ip: record.source_ip,
+            user_agent: record.user_agent,
+            creation_date: record.creation_date,
+            schema,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
+impl<Handler: BackendHandler> Clone for LoginRecord<Handler> {
+    fn clone(&self) -> Self {
+        Self {
+            user_id: self.user_id.clone(),
+            success: self.success,
+            reason: self.reason.clone(),
+            source_ip: self.source_ip.clone(),
+            user_agent: self.user_agent.clone(),
+            creation_date: self.creation_date,
+            // attributes: self.attributes.clone(),
+            schema: self.schema.clone(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+#[graphql_object(context = Context<Handler>)]
+impl<Handler: BackendHandler> LoginRecord<Handler> {
+    fn creation_date(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc.from_utc_datetime(&self.creation_date)
+    }
+
+    fn user_id(&self) -> &str {
+        self.user_id.as_str()
+    }
+
+    fn success(&self) -> bool {
+        self.success.clone()
+    }
+
+    fn user_agent(&self) -> String {
+        self.user_agent.clone()
+    }
+    fn reason(&self) -> String {
+        self.reason.clone()
+    }
+    fn source_ip(&self) -> String {
+        self.source_ip.clone()
+    }
+
 }
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]

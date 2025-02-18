@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use std::collections::HashSet;
-
 use crate::domain::{error::Result, types::UserId};
+use crate::infra::auth_service::LoginRecord;
 
 #[async_trait]
 pub trait TcpBackendHandler: Sync {
@@ -26,4 +26,6 @@ pub trait TcpBackendHandler: Sync {
     async fn get_user_id_for_password_reset_token(&self, token: &str) -> Result<UserId>;
 
     async fn delete_password_reset_token(&self, token: &str) -> Result<()>;
+
+    async fn create_login_record(&self, record: &LoginRecord) -> Result<()>;
 }

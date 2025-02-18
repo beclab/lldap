@@ -18,6 +18,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use log::{error};
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
@@ -39,6 +40,15 @@ use crate::{
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;
+
+#[derive(Debug)]
+pub struct LoginRecord {
+    pub user_id: UserId,
+    pub success: bool,
+    pub reason: String,
+    pub source_ip: String,
+    pub user_agent: String,
+}
 
 fn default_hash<T: Hash + ?Sized>(token: &T) -> u64 {
     use std::collections::hash_map::DefaultHasher;
@@ -425,6 +435,7 @@ where
 async fn simple_login<Backend>(
     data: web::Data<AppState<Backend>>,
     request: web::Json<login::ClientSimpleLoginRequest>,
+    http_request: HttpRequest,
 ) -> TcpResult<HttpResponse>
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
@@ -434,18 +445,52 @@ where
         name: username.clone(),
         password,
     };
-    data.get_login_handler().bind(bind_request).await?;
-    get_login_successful_response(&data, &username).await
+    let source_ip = http_request.connection_info().
+        realip_remote_addr().
+        unwrap_or("unknown").
+        to_string();
+    let user_agent = http_request.headers().
+        get("User-Agent").
+        and_then(|h| h.to_str().ok()).
+        unwrap_or("unknown").to_string();
+
+    let bind_result = data.get_login_handler().bind(bind_request).await;
+
+    let mut record = LoginRecord{
+        user_id: username.clone(),
+        success: true,
+        reason: "authenticated successfully".to_string(),
+        source_ip: source_ip,
+        user_agent: user_agent,
+    };
+
+    match bind_result {
+        Ok(_) => {
+            if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
+                error!("failed to create login record: {}", e);
+            }
+            get_login_successful_response(&data, &username).await
+        }
+        Err(e) => {
+            record.success = false;
+            record.reason = format!("{}",e);
+            if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
+                error!("failed to create login record: {}", e);
+            }
+            return Err(e.into());
+        }
+    }
 }
 
 async fn simple_login_handler<Backend>(
     data: web::Data<AppState<Backend>>,
     request: web::Json<login::ClientSimpleLoginRequest>,
+    http_request: HttpRequest,
 ) -> HttpResponse
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
 {
-    simple_login(data, request)
+    simple_login(data, request,http_request)
         .await
         .unwrap_or_else(error_to_http_response)
 }

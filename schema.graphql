@@ -56,6 +56,7 @@ type Query {
   user(userId: String!): User!
   users(filters: RequestFilter): [User!]!
   groups: [Group!]!
+  loginRecords(userId: String!): [LoginRecord!]!
   group(groupId: Int!): Group!
   groupByName(groupName: String!): Group!
   schema: Schema!
@@ -163,6 +164,15 @@ enum AttributeType {
   INTEGER
   JPEG_PHOTO
   DATE_TIME
+}
+
+type LoginRecord {
+  creationDate: DateTimeUtc!
+  userId: String!
+  success: Boolean!
+  userAgent: String!
+  reason: String!
+  sourceIp: String!
 }
 
 type AttributeList {
