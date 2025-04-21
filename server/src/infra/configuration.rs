@@ -90,12 +90,6 @@ pub struct Configuration {
     pub ldap_user_email: String,
     #[builder(default = r#"String::from("password")"#)]
     pub ldap_user_pass: String,
-    #[builder(default = r#"UserId::new("terminus")"#)]
-    pub terminus_user_dn: UserId,
-    #[builder(default = r#"String::from("terminus@myterminus.com")"#)]
-    pub terminus_user_email: String,
-    #[builder(default = r#"String::from("password")"#)]
-    pub terminus_user_pass: String,
     #[builder(default = "false")]
     pub force_ldap_user_pass_reset: bool,
     #[builder(default = "false")]

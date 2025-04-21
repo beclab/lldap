@@ -151,10 +151,6 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
             .await
             .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
             .context("while creating the admin user")?;
-        create_admin_user(&backend_handler, config.terminus_user_dn.clone(), config.terminus_user_pass.clone(), &config.terminus_user_email)
-            .await
-            .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
-            .context("while creating the admin user")?;
     } else if config.force_ldap_user_pass_reset {
         warn!("Forcing admin password reset to the config-provided password");
         // register_password(
