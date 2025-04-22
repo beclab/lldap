@@ -1,3 +1,5 @@
+use std::env;
+use std::sync::Arc;
 use crate::{
     domain::{handler::BackendHandler, types::UserId},
     infra::{
@@ -26,10 +28,13 @@ use juniper::{
 use tracing::debug;
 use crate::infra::graphql::error::create_custom_error;
 use crate::infra::graphql::status::StatusReason;
+use async_nats::{Client as NatsClient, ConnectOptions};
+use log::info;
 
 pub struct Context<Handler: BackendHandler> {
     pub handler: AccessControlledBackendHandler<Handler>,
     pub validation_result: ValidationResults,
+    pub nats_client: Option<Arc<NatsClient>>
 }
 
 pub fn field_error_callback<'a>(
@@ -52,7 +57,11 @@ impl<Handler: BackendHandler> Context<Handler> {
         Self {
             handler: AccessControlledBackendHandler::new(handler),
             validation_result,
+            nats_client: None
         }
+    }
+    pub fn get_nats_client(&self) -> Option<&NatsClient> {
+        self.nats_client.as_ref().map(|client| client.as_ref())
     }
 
     pub fn get_admin_handler(&self) -> Option<&impl AdminBackendHandler> {
@@ -226,9 +235,23 @@ async fn graphql_route<Handler: BackendHandler + Clone>(
     let mut inner_payload = payload.into_inner();
     let bearer = BearerAuth::from_request(&req, &mut inner_payload).await?;
     let validation_result = check_if_token_is_valid(&data, bearer.token())?;
+    let nats_user = env::var("NATS_USERNAME").unwrap_or_else(|_| "unknown".to_string());
+    let nats_password = env::var("NATS_PASSWORD").unwrap_or_else(|_| "unknown".to_string());
+    let nats_client = match ConnectOptions::new()
+        .user_and_password(nats_user, nats_password)
+        .connect("nats://nats.os-system:4222").await {
+        Ok(client) => Some(Arc::new(client)),
+        Err(e) => {
+            info!("Failed to connect to nats: {:?}", e);
+            None
+        }
+    };
+
+
     let context = Context::<Handler> {
         handler: data.backend_handler.clone(),
         validation_result,
+        nats_client,
     };
     let schema = &schema();
     let context = &context;

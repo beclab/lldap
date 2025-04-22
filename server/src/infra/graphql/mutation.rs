@@ -28,6 +28,9 @@ use tracing::{debug, debug_span, Instrument, Span};
 use crate::domain::error::DomainError;
 use crate::infra::graphql::error::create_custom_error;
 use crate::infra::graphql::status::StatusReason;
+use async_nats::Client as NatsClient;
+use log::{info, log, Level};
+
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -156,7 +159,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         handler
             .create_user(CreateUserRequest {
                 user_id: user_id.clone(),
-                email: user.email.into(),
+                email: user.email.clone().into(),
                 display_name: user.display_name,
                 first_name: user.first_name,
                 last_name: user.last_name,
@@ -173,6 +176,30 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 ),
                 _ => e.into(),
             })?;
+        // publish a message if user create success
+        if let Some(nats_client) = context.get_nats_client() {
+            let user_create_event = serde_json::json!({
+                "event_type": "user_created",
+                "username": user_id.clone().as_str(),
+                "email": user.email.as_str(),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            info!("into user_create_event....");
+            let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
+
+            info!("subject: {}", nats_subject_system_users);
+            if let Err(err) = nats_client.publish(
+                nats_subject_system_users,
+                serde_json::to_string(&user_create_event)
+                     .unwrap_or_default()
+                     .into()
+            ).await {
+                info!("Failed to publish user creation event to nats system.user for user:'{}', err {}",user_id.as_str(),err);
+            } else {
+                info!("Published user creation event to nats system.user: {}",user_id.as_str());
+            }
+        }
+
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
     }
@@ -374,6 +401,26 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err("Cannot delete current user".into());
         }
         handler.delete_user(&user_id).instrument(span).await?;
+        // publish a message if user deleted success
+        if let Some(nats_client) = context.get_nats_client() {
+            let user_create_event = serde_json::json!({
+                "event_type": "user_deleted",
+                "username": user_id.clone().as_str(),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
+
+            if let Err(err) = nats_client.publish(
+                nats_subject_system_users,
+                serde_json::to_string(&user_create_event)
+                    .unwrap_or_default()
+                    .into()
+            ).await {
+                info!("Failed to publish user creation event to nats system.user for user:'{}', err {:?}",user_id.as_str(),err);
+            } else {
+                info!("Published user creation event to nats system.user: {}",user_id.as_str());
+            }
+        }
         Ok(Success::new())
     }
 
