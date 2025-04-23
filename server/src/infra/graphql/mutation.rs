@@ -720,14 +720,14 @@ async fn publish_nats_event(subject: String, event: serde_json::Value) -> Result
     info!("nats_password: {}", nats_password);
     let client = ConnectOptions::new()
         .user_and_password(nats_user, nats_password)
-        .connect("nats://nats.os-system:4222").await?;
+        .connect("nats://nats:4222").await?;
     let js = async_nats::jetstream::new(client);
     let publish_result = js.publish(
         subject.clone(),
         // serde_json::to_string(&event)
         //     .unwrap_or_default()
-        //     .into()
-        "hello".into(),
+        //     .into(),
+        "{'hello':'world'}".into(),
     ).await?;
     publish_result.await?;
     info!("Published event: {} to NATS subject: {}", event,subject);
