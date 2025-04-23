@@ -29,9 +29,8 @@ use tracing::{debug, debug_span, Instrument, Span};
 use crate::domain::error::DomainError;
 use crate::infra::graphql::error::create_custom_error;
 use crate::infra::graphql::status::StatusReason;
-use async_nats::{Client as NatsClient, ConnectOptions};
-use log::{info, log, Level};
-
+use async_nats::{ConnectOptions};
+use log::{info};
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -178,44 +177,19 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 _ => e.into(),
             })?;
         // publish a message if user create success
-        // if let Some(nats_client) = context.get_nats_client() {
-        let nats_user = env::var("NATS_USERNAME").unwrap_or_else(|_| "unknown".to_string());
-        let nats_password = env::var("NATS_PASSWORD").unwrap_or_else(|_| "unknown".to_string());
 
-        info!("nats_user: {}", nats_user);
-        info!("nats_password: {}", nats_password);
-
-        let nclient = match ConnectOptions::new()
-            .user_and_password(nats_user, nats_password)
-            .connect("nats://nats.os-system:4222").await {
-            Ok(client) => {
-                let user_create_event = serde_json::json!({
+        let user_create_event = serde_json::json!({
                 "event_type": "user_created",
                 "username": user_id.clone().as_str(),
                 "email": user.email.as_str(),
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             });
-                info!("into user_create_event....");
-                let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
+        let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
 
-                info!("subject: {}", nats_subject_system_users);
-                if let Err(err) = client.publish(
-                    nats_subject_system_users,
-                    serde_json::to_string(&user_create_event)
-                        .unwrap_or_default()
-                        .into()
-                ).await {
-                    info!("Failed to publish user creation event to nats system.user for user:'{}', err {}",user_id.as_str(),err);
-                } else {
-                    info!("Published user creation event to nats system.user: {}",user_id.as_str());
-                }
-            },
-            Err(e) => {
-                info!("Failed to connect to nats: {:?}", e);
-            }
-        };
 
-        // }
+        if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_create_event).await {
+            info!("Failed to publish user creation event: user: {}, err:{}", user_id.clone().as_str(),err);
+        }
 
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
@@ -418,26 +392,26 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err("Cannot delete current user".into());
         }
         handler.delete_user(&user_id).instrument(span).await?;
-        // publish a message if user deleted success
-        if let Some(nats_client) = context.get_nats_client() {
-            let user_create_event = serde_json::json!({
-                "event_type": "user_deleted",
-                "username": user_id.clone().as_str(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            });
-            let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
-
-            if let Err(err) = nats_client.publish(
-                nats_subject_system_users,
-                serde_json::to_string(&user_create_event)
-                    .unwrap_or_default()
-                    .into()
-            ).await {
-                info!("Failed to publish user creation event to nats system.user for user:'{}', err {:?}",user_id.as_str(),err);
-            } else {
-                info!("Published user creation event to nats system.user: {}",user_id.as_str());
-            }
-        }
+        // // publish a message if user deleted success
+        // if let Some(nats_client) = context.get_nats_client() {
+        //     let user_create_event = serde_json::json!({
+        //         "event_type": "user_deleted",
+        //         "username": user_id.clone().as_str(),
+        //         "timestamp": chrono::Utc::now().to_rfc3339(),
+        //     });
+        //     let nats_subject_system_users: &str = option_env!("NATS_SUBJECT_SYSTEM_USERS").unwrap_or("");
+        //
+        //     if let Err(err) = nats_client.publish(
+        //         nats_subject_system_users,
+        //         serde_json::to_string(&user_create_event)
+        //             .unwrap_or_default()
+        //             .into()
+        //     ).await {
+        //         info!("Failed to publish user creation event to nats system.user for user:'{}', err {:?}",user_id.as_str(),err);
+        //     } else {
+        //         info!("Published user creation event to nats system.user: {}",user_id.as_str());
+        //     }
+        // }
         Ok(Success::new())
     }
 
@@ -736,4 +710,26 @@ fn deserialize_attribute(
         name: attribute_name,
         value: deserialized_values,
     })
+}
+
+async fn publish_nats_event(subject: String, event: serde_json::Value) -> Result<(), anyhow::Error> {
+    let nats_user = env::var("NATS_USERNAME").unwrap_or_else(|_| "unknown".to_string());
+    let nats_password = env::var("NATS_PASSWORD").unwrap_or_else(|_| "unknown".to_string());
+
+    info!("nats_user: {}", nats_user);
+    info!("nats_password: {}", nats_password);
+    let client = ConnectOptions::new()
+        .user_and_password(nats_user, nats_password)
+        .connect("nats://nats.os-system:4222").await?;
+    let js = async_nats::jetstream::new(client);
+    let publish_result = js.publish(
+        subject.clone(),
+        // serde_json::to_string(&event)
+        //     .unwrap_or_default()
+        //     .into()
+        "hello".into(),
+    ).await?;
+    publish_result.await?;
+    info!("Published event: {} to NATS subject: {}", event,subject);
+    Ok(())
 }
