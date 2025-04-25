@@ -34,6 +34,7 @@ use crate::domain::opaque_handler::OpaqueHandler;
 
 mod domain;
 mod infra;
+mod nats_service;
 
 async fn create_admin_user(handler: &SqlBackendHandler, username: UserId, password: String, email: &String) -> Result<()> {
     //let pass_length = password.len();

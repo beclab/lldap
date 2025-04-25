@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::Arc;
 
 use crate::{
@@ -28,6 +29,9 @@ use tracing::{debug, debug_span, Instrument, Span};
 use crate::domain::error::DomainError;
 use crate::infra::graphql::error::create_custom_error;
 use crate::infra::graphql::status::StatusReason;
+use async_nats::{ConnectOptions};
+use log::{info};
+use crate::nats_service::publish_nats_event;
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -156,7 +160,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         handler
             .create_user(CreateUserRequest {
                 user_id: user_id.clone(),
-                email: user.email.into(),
+                email: user.email.clone().into(),
                 display_name: user.display_name,
                 first_name: user.first_name,
                 last_name: user.last_name,
@@ -173,6 +177,19 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 ),
                 _ => e.into(),
             })?;
+        // publish a message if user create success
+
+        let user_create_event = serde_json::json!({
+                "event_type": "user_created",
+                "username": user_id.clone().as_str(),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+        if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_create_event.clone()).await {
+            info!("Failed to publish user creation event: user: {}, err:{}", user_id.clone().as_str(),err);
+        }
+
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
     }
@@ -374,6 +391,17 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err("Cannot delete current user".into());
         }
         handler.delete_user(&user_id).instrument(span).await?;
+        // publish a message if user delete success
+        let user_delete_event = serde_json::json!({
+                "event_type": "user_deleted",
+                "username": user_id.clone().as_str(),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+        if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_delete_event.clone()).await {
+            info!("Failed to publish user delete event: user: {}, err:{}", user_id.clone().as_str(),err);
+        }
         Ok(Success::new())
     }
 
@@ -389,6 +417,8 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             span.in_scope(|| debug!("Cannot delete admin group"));
             return Err("Cannot delete admin group".into());
         }
+        let group_details = handler.get_group_details(GroupId(group_id)).await?;
+
         handler
             .delete_group(GroupId(group_id))
             .instrument(span)
@@ -401,6 +431,17 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 ),
                 _ => e.into(),
             })?;
+
+        let group_delete_event = serde_json::json!({
+            "event_type": "group_deleted",
+            "group_id": group_id,
+            "name": group_details.display_name,
+        });
+        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+        if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), group_delete_event.clone()).await {
+            info!("Failed to publish group creation event: group: {}, err:{}", group_details.display_name,err);
+        }
         Ok(Success::new())
     }
 
@@ -632,7 +673,7 @@ async fn create_group_with_details<Handler: BackendHandler>(
         display_name: request.display_name.into(),
         attributes,
     };
-    let group_id = handler.create_group(request).await
+    let group_id = handler.create_group(request.clone()).await
         .map_err(|e| match e {
             DomainError::EntityAlreadyExists(_) => create_custom_error(
                 StatusCode::CONFLICT.as_u16() as i32,
@@ -641,6 +682,17 @@ async fn create_group_with_details<Handler: BackendHandler>(
             ),
             _ => e.into(),
         })?;
+    let group_create_event = serde_json::json!({
+        "event_type": "group_created",
+        "group_id": group_id,
+        "name": request.clone().display_name,
+    });
+    let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+    if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), group_create_event.clone()).await {
+        info!("Failed to publish group creation event: group: {}, err:{}", request.display_name,err);
+    }
+
 
     let group_details = handler.get_group_details(group_id).instrument(span).await?;
     super::query::Group::<Handler>::from_group_details(group_details, Arc::new(schema))
