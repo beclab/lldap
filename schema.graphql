@@ -146,6 +146,7 @@ input CreateGroupInput {
 
 type User {
   id: String!
+  userIndex: Int!
   email: String!
   displayName: String!
   firstName: String!

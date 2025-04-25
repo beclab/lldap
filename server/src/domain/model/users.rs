@@ -11,6 +11,8 @@ pub struct Entity;
 #[derive(Clone, Debug, PartialEq, DeriveModel, Eq, Serialize, Deserialize, DeriveActiveModel)]
 #[sea_orm(table_name = "users")]
 pub struct Model {
+    #[sea_orm(auto_increment = true)]
+    pub user_index: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: UserId,
     pub email: Email,
@@ -31,6 +33,7 @@ impl EntityName for Entity {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Column {
+    UserIndex,
     UserId,
     Email,
     LowercaseEmail,
@@ -47,6 +50,7 @@ impl ColumnTrait for Column {
 
     fn def(&self) -> ColumnDef {
         match self {
+            Column::UserIndex => ColumnType::Integer,
             Column::UserId => ColumnType::String(Some(255)),
             Column::Email => ColumnType::String(Some(255)),
             Column::LowercaseEmail => ColumnType::String(Some(255)),
@@ -115,6 +119,7 @@ impl ActiveModelBehavior for ActiveModel {}
 impl From<Model> for crate::domain::types::User {
     fn from(user: Model) -> Self {
         Self {
+            user_index: user.user_index,
             user_id: user.user_id,
             email: user.email,
             display_name: user.display_name,

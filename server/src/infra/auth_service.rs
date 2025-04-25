@@ -12,12 +12,7 @@ use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
 use sha2::Sha512;
-use std::{
-    collections::HashSet,
-    hash::Hash,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{collections::HashSet, env, hash::Hash, pin::Pin, task::{Context, Poll}};
 use log::{error};
 use serde_json::json;
 use time::ext::NumericalDuration;
