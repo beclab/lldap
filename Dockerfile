@@ -1,4 +1,4 @@
-FROM rust:1.79.0 as builder
+FROM rust:1.85.1 as builder
 
 RUN USER=root
 WORKDIR /app

@@ -19,6 +19,7 @@ use std::{
     task::{Context, Poll},
 };
 use log::{error};
+use serde_json::json;
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
@@ -37,6 +38,7 @@ use crate::{
         tcp_server::{error_to_http_response, AppState, TcpError, TcpResult},
     },
 };
+use crate::nats_service::publish_nats_event;
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;
@@ -464,10 +466,22 @@ where
         user_agent: user_agent,
     };
 
+    // publish a message if user delete success
+    let user_login_event = serde_json::json!({
+                "event_type": "user_login",
+                "username": username.clone().as_str(),
+                "timestamp": Utc::now().to_rfc3339(),
+            });
+
     match bind_result {
         Ok(_) => {
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
+            }
+            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+            if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_login_event.clone()).await {
+                log::info!("Failed to publish user login event: username: {}, err:{}", username.clone().as_str(),err);
             }
             get_login_successful_response(&data, &username).await
         }
@@ -476,6 +490,11 @@ where
             record.reason = format!("{}",e);
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
+            }
+            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+
+            if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_login_event.clone()).await {
+                log::info!("Failed to publish user login event: user: {}, err:{}", username.clone().as_str(),err);
             }
             return Err(e.into());
         }
