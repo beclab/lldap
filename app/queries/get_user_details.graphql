@@ -1,6 +1,7 @@
 query GetUserDetails($id: String!) {
   user(userId: $id) {
     id
+    userIndex
     email
     displayName
     firstName

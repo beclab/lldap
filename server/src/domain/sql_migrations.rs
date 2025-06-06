@@ -17,6 +17,7 @@ use tracing::{error, info, instrument, warn};
 #[derive(DeriveIden, PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum Users {
     Table,
+    UserIndex,
     UserId,
     Email,
     LowercaseEmail,
@@ -1195,6 +1196,26 @@ async fn migrate_to_v11(transaction: DatabaseTransaction) -> Result<DatabaseTran
     Ok(transaction)
 }
 
+async fn migrate_to_v12(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
+    let builder = transaction.get_database_backend();
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(Users::Table)
+                    .add_column_if_not_exists(ColumnDef::new(Users::UserIndex)
+                        .integer()
+                        .auto_increment()
+                        .unique_key()
+                        .not_null()
+                    ),
+            ),
+        )
+        .await?;
+    Ok(transaction)
+}
+
+
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
     ($l:ident) => {
@@ -1226,7 +1247,7 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v9),
         to_sync!(migrate_to_v10),
         to_sync!(migrate_to_v11),
-
+        to_sync!(migrate_to_v12),
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

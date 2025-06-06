@@ -63,6 +63,7 @@ pub fn get_user_attribute(
             vec![user.user_id.to_string().into_bytes()]
         }
         UserFieldType::PrimaryField(UserColumn::Email) => vec![user.email.to_string().into_bytes()],
+        UserFieldType::PrimaryField(UserColumn::UserIndex) => vec![user.user_index.to_string().into_bytes()],
         UserFieldType::PrimaryField(
             UserColumn::LowercaseEmail
             | UserColumn::PasswordHash

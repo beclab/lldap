@@ -405,6 +405,7 @@ pub struct AttributeValue {
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub struct User {
+    pub user_index: i32,
     pub user_id: UserId,
     pub email: Email,
     pub display_name: Option<String>,
@@ -418,6 +419,7 @@ impl Default for User {
     fn default() -> Self {
         let epoch = chrono::Utc.timestamp_opt(0, 0).unwrap().naive_utc();
         User {
+            user_index: 1,
             user_id: UserId::default(),
             email: Email::default(),
             display_name: None,

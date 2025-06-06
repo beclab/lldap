@@ -355,6 +355,7 @@ impl<Handler: BackendHandler> User<Handler> {
     fn id(&self) -> &str {
         self.user.user_id.as_str()
     }
+    fn user_index(&self) -> i32 {self.user.user_index}
 
     fn email(&self) -> &str {
         self.user.email.as_str()
