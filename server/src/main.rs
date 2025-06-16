@@ -28,15 +28,20 @@ use anyhow::{anyhow, bail, Context, Result};
 //use futures_util::TryFutureExt;
 use sea_orm::{Database, DatabaseConnection};
 //use secstr::{SecUtf8};
-use tracing::*;
-use lldap_auth::types::UserId;
 use crate::domain::opaque_handler::OpaqueHandler;
+use lldap_auth::types::UserId;
+use tracing::*;
 
 mod domain;
 mod infra;
 mod nats_service;
 
-async fn create_admin_user(handler: &SqlBackendHandler, username: UserId, password: String, email: &String) -> Result<()> {
+async fn create_admin_user(
+    handler: &SqlBackendHandler,
+    username: UserId,
+    password: String,
+    email: &String,
+) -> Result<()> {
     //let pass_length = password.len();
     handler
         .create_user(CreateUserRequest {
@@ -52,7 +57,10 @@ async fn create_admin_user(handler: &SqlBackendHandler, username: UserId, passwo
         .await
         .context("Error creating admin user")?;
 
-    handler.registration_password(&username,password).await.context("Error set password")?;
+    handler
+        .registration_password(&username, password)
+        .await
+        .context("Error set password")?;
 
     // assert!(
     //     pass_length >= 8,
@@ -102,6 +110,9 @@ async fn setup_sql_tables(database_url: &DatabaseUrl) -> Result<DatabaseConnecti
     infra::jwt_sql_tables::init_table(&sql_pool)
         .await
         .context("while creating jwt tables")?;
+    domain::sql_tables::migration_table(&sql_pool)
+        .await
+        .context("while migrating database tables")?;
     Ok(sql_pool)
 }
 
@@ -148,10 +159,15 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
     };
     if !admin_present {
         warn!("Could not find an admin user, trying to create the user \"admin\" with the config-provided password");
-        create_admin_user(&backend_handler, config.ldap_user_dn.clone(), config.ldap_user_pass.clone(), &config.ldap_user_email)
-            .await
-            .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
-            .context("while creating the admin user")?;
+        create_admin_user(
+            &backend_handler,
+            config.ldap_user_dn.clone(),
+            config.ldap_user_pass.clone(),
+            &config.ldap_user_email,
+        )
+        .await
+        .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
+        .context("while creating the admin user")?;
     } else if config.force_ldap_user_pass_reset {
         warn!("Forcing admin password reset to the config-provided password");
         // register_password(

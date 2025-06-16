@@ -1,6 +1,8 @@
-use std::sync::Arc;
 use crate::infra::graphql::error::create_custom_error;
+use std::sync::Arc;
 
+use crate::domain::error::DomainError;
+use crate::infra::graphql::status::StatusReason;
 use crate::{
     domain::{
         deserialize::deserialize_attribute_value,
@@ -15,14 +17,12 @@ use crate::{
         graphql::api::{field_error_callback, Context},
     },
 };
+use actix_http::StatusCode;
 use anyhow::Context as AnyhowContext;
 use chrono::{NaiveDateTime, TimeZone};
 use juniper::{graphql_object, FieldError, FieldResult, GraphQLInputObject};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, Instrument, Span};
-use crate::domain::error::DomainError;
-use crate::infra::graphql::status::StatusReason;
-use actix_http::StatusCode;
 
 type DomainRequestFilter = crate::domain::handler::UserRequestFilter;
 type DomainUser = crate::domain::types::User;
@@ -149,7 +149,10 @@ impl<Handler: BackendHandler> Query<Handler> {
             ))?;
 
         let schema = Arc::new(self.get_schema(context, span.clone()).await?);
-        let user = handler.get_user_details(&user_id).instrument(span).await
+        let user = handler
+            .get_user_details(&user_id)
+            .instrument(span)
+            .await
             .map_err(|e| match e {
                 DomainError::EntityNotFound(_) => create_custom_error(
                     StatusCode::NOT_FOUND.as_u16() as i32,
@@ -207,7 +210,10 @@ impl<Handler: BackendHandler> Query<Handler> {
             .collect()
     }
 
-    async fn login_records(context: &Context<Handler>, user_id: String) -> FieldResult<Vec<LoginRecord<Handler>>> {
+    async fn login_records(
+        context: &Context<Handler>,
+        user_id: String,
+    ) -> FieldResult<Vec<LoginRecord<Handler>>> {
         let span = debug_span!("[GraphQL query] login records");
         let handler = context
             .get_readonly_handler()
@@ -219,8 +225,9 @@ impl<Handler: BackendHandler> Query<Handler> {
         let user_id = UserId::new(&user_id);
         let schema = Arc::new(self.get_schema(context, span.clone()).await?);
         let domain_records = handler.get_login_records(&user_id).instrument(span).await?;
-        domain_records.into_iter()
-            .map(|l| LoginRecord::<Handler>::from_user_login_record(l,schema.clone()))
+        domain_records
+            .into_iter()
+            .map(|l| LoginRecord::<Handler>::from_user_login_record(l, schema.clone()))
             .collect()
         // Ok(domain_records)
     }
@@ -241,19 +248,22 @@ impl<Handler: BackendHandler> Query<Handler> {
             .get_group_details(GroupId(group_id))
             .instrument(span)
             .await
-        .map_err(|e| match e {
-            DomainError::EntityNotFound(_) => create_custom_error(
-                StatusCode::NOT_FOUND.as_u16() as i32,
-                StatusReason::NotFound.as_str(),
-                e.to_string().as_str(),
-            ),
-            _ => e.into(),
-        })?;
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
 
         Group::<Handler>::from_group_details(group_details, schema.clone())
     }
 
-    async fn group_by_name(context: &Context<Handler>, group_name: String) -> FieldResult<Group<Handler>> {
+    async fn group_by_name(
+        context: &Context<Handler>,
+        group_name: String,
+    ) -> FieldResult<Group<Handler>> {
         let span = debug_span!("[GraphQL query] group");
         span.in_scope(|| {
             debug!(?group_name);
@@ -355,7 +365,9 @@ impl<Handler: BackendHandler> User<Handler> {
     fn id(&self) -> &str {
         self.user.user_id.as_str()
     }
-    fn user_index(&self) -> i32 {self.user.user_index}
+    fn user_index(&self) -> i32 {
+        self.user.user_index
+    }
 
     fn email(&self) -> &str {
         self.user.email.as_str()
@@ -623,7 +635,6 @@ impl<Handler: BackendHandler> LoginRecord<Handler> {
     fn source_ip(&self) -> String {
         self.source_ip.clone()
     }
-
 }
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]

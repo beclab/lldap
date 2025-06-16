@@ -1,16 +1,22 @@
 use super::tcp_backend_handler::TcpBackendHandler;
+use crate::domain::types::UserTOTPSecret;
 use crate::domain::{
     error::*,
     model::{self, JwtRefreshStorageColumn, JwtStorageColumn, PasswordResetTokensColumn},
     sql_backend_handler::SqlBackendHandler,
     types::UserId,
 };
+use crate::infra::auth_service::LoginRecord;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use sea_orm::{sea_query::{Cond, Expr}, ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter, QuerySelect, Set};
+use lldap_auth::login::TokenInfo;
+use sea_orm::{
+    sea_query::{Cond, Expr},
+    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter,
+    QuerySelect, Set, TransactionTrait,
+};
 use std::collections::HashSet;
 use tracing::{debug, instrument};
-use crate::infra::auth_service::LoginRecord;
 
 fn gen_random_string(len: usize) -> String {
     use rand::{distributions::Alphanumeric, rngs::SmallRng, Rng, SeedableRng};
@@ -39,7 +45,11 @@ impl TcpBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug")]
-    async fn create_refresh_token(&self, user: &UserId) -> Result<(String, chrono::Duration)> {
+    async fn create_refresh_token(
+        &self,
+        user: &UserId,
+        mfa: i64,
+    ) -> Result<(String, chrono::Duration)> {
         debug!(?user);
         // TODO: Initialize the rng only once. Maybe Arc<Cell>?
         let refresh_token = gen_random_string(100);
@@ -55,6 +65,7 @@ impl TcpBackendHandler for SqlBackendHandler {
             refresh_token_hash: refresh_token_hash as i64,
             user_id: user.clone(),
             expiry_date: chrono::Utc::now().naive_utc() + duration,
+            mfa: mfa,
         }
         .into_active_model();
         new_token.insert(&self.sql_pool).await?;
@@ -66,14 +77,18 @@ impl TcpBackendHandler for SqlBackendHandler {
         &self,
         user: &UserId,
         jwt_hash: u64,
+        token: &str,
         expiry_date: NaiveDateTime,
+        mfa: i64,
     ) -> Result<()> {
         debug!(?user, ?jwt_hash);
         let new_token = model::jwt_storage::Model {
             jwt_hash: jwt_hash as i64,
+            token: token.to_string(),
             user_id: user.clone(),
             blacklisted: false,
             expiry_date,
+            mfa,
         }
         .into_active_model();
         let existing_hash = model::jwt_storage::Entity::find()
@@ -88,15 +103,17 @@ impl TcpBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug")]
-    async fn check_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<bool> {
+    async fn check_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<(bool, i64)> {
         debug!(?user);
-        Ok(
-            model::JwtRefreshStorage::find_by_id(refresh_token_hash as i64)
-                .filter(JwtRefreshStorageColumn::UserId.eq(user))
-                .one(&self.sql_pool)
-                .await?
-                .is_some(),
-        )
+
+        let record = model::JwtRefreshStorage::find_by_id(refresh_token_hash as i64)
+            .filter(JwtRefreshStorageColumn::UserId.eq(user))
+            .one(&self.sql_pool)
+            .await?;
+        match record {
+            Some(record) => Ok((true, record.mfa)),
+            None => Ok((false, 0)),
+        }
     }
 
     #[instrument(skip_all, level = "debug")]
@@ -192,10 +209,99 @@ impl TcpBackendHandler for SqlBackendHandler {
             source_ip: Set(record.source_ip.to_string()),
             user_agent: Set(record.user_agent.to_string()),
             creation_date: Set(now),
-            id: NotSet
-        }.into_active_model();
+            id: NotSet,
+        }
+        .into_active_model();
         login_record.insert(&self.sql_pool).await?;
         Ok(())
+    }
+    #[instrument(skip_all, level = "debug")]
+    async fn get_user_totp_secret(&self, user_id: &UserId) -> Result<UserTOTPSecret> {
+        let user = model::User::find_by_id(user_id.to_owned())
+            .one(&self.sql_pool)
+            .await?
+            .ok_or_else(|| {
+                DomainError::EntityNotFound(format!("No such user {:?}", user_id.to_string()))
+            })?;
 
+        Ok(UserTOTPSecret {
+            totp_secret: user.totp_secret.to_owned(),
+        })
+    }
+    #[instrument(skip_all, level = "debug")]
+    async fn update_user_totp_secret(&self, user_id: &UserId, base32_secret: String) -> Result<()> {
+        let exist_user = model::User::find_by_id(user_id.clone())
+            .one(&self.sql_pool)
+            .await?;
+        if exist_user.is_none() {
+            return Err(DomainError::EntityNotFound(format!(
+                "No such user {:?}",
+                user_id.as_str()
+            )));
+        }
+        let user_update = model::users::ActiveModel {
+            user_id: ActiveValue::Set(user_id.clone()),
+            totp_secret: ActiveValue::Set(Some(base32_secret)),
+            ..Default::default()
+        };
+        self.sql_pool
+            .transaction::<_, (), DomainError>(|transaction| {
+                Box::pin(async move {
+                    user_update
+                        .update(transaction)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| DomainError::from(e))
+                })
+            })
+            .await?;
+        Ok(())
+    }
+
+    #[instrument(skip_all, level = "debug")]
+    async fn access_token_list(&self) -> Result<Vec<TokenInfo>> {
+        let tokens = model::JwtStorage::find()
+            .select_only()
+            .columns([JwtStorageColumn::Token, JwtStorageColumn::Blacklisted])
+            .into_tuple::<(String, bool)>()
+            .all(&self.sql_pool)
+            .await?
+            .into_iter()
+            .map(|(token, is_blacklisted)| TokenInfo {
+                access_token: token,
+                is_blacklisted,
+            })
+            .collect::<Vec<TokenInfo>>();
+        Ok(tokens)
+    }
+
+    #[instrument(skip_all, level = "debug")]
+    async fn set_user_initialized(&self, user_id: &UserId) -> Result<()> {
+        let exist_user = model::User::find_by_id(user_id.clone())
+            .one(&self.sql_pool)
+            .await?;
+        if exist_user.is_none() {
+            return Err(DomainError::EntityNotFound(format!(
+                "No such user {:?}",
+                user_id.as_str()
+            )));
+        }
+        let user_update = model::users::ActiveModel {
+            user_id: ActiveValue::Set(user_id.clone()),
+            initialized: Set(true),
+            ..Default::default()
+        };
+        self.sql_pool
+            .transaction::<_, (), DomainError>(|transaction| {
+                Box::pin(async move {
+                    user_update
+                        .update(transaction)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| DomainError::from(e))
+                })
+            })
+            .await?;
+        Ok(())
     }
 }

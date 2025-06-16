@@ -1,3 +1,4 @@
+use crate::domain::types::LoginRecord;
 use crate::domain::{
     error::Result,
     types::{
@@ -9,7 +10,6 @@ use crate::domain::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use crate::domain::types::LoginRecord;
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct BindRequest {
@@ -121,6 +121,13 @@ pub struct UpdateUserRequest {
     pub avatar: Option<JpegPhoto>,
     pub delete_attributes: Vec<AttributeName>,
     pub insert_attributes: Vec<AttributeValue>,
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Default)]
+pub struct UpdateUserTOTPSecretRequest {
+    // Same fields as CreateUserRequest, but no with an extra layer of Option.
+    pub user_id: UserId,
+    pub totp_secret: String,
 }
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Default)]

@@ -24,6 +24,10 @@ pub mod login {
     }
 
     #[derive(Serialize, Deserialize, Clone)]
+    pub struct TotpVerifyRequest {
+        pub token: String,
+    }
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct ServerLoginStartResponse {
         /// Base64, encrypted ServerData to be passed back to the server.
         pub server_data: String,
@@ -57,6 +61,17 @@ pub mod login {
         pub token: String,
         #[serde(rename = "refreshToken", skip_serializing_if = "Option::is_none")]
         pub refresh_token: Option<String>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TokenInfo {
+        pub access_token: String,
+        pub is_blacklisted: bool,
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TokenVerifyRequest {
+        pub access_token: String,
     }
 }
 
@@ -130,11 +145,19 @@ pub mod password_reset {
     }
 }
 
+pub mod totp_bind {
+    use super::*;
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TotpBindResponse {
+        pub base32_secret: String,
+    }
+}
+
 pub mod types {
     use serde::{Deserialize, Serialize};
 
     #[cfg(feature = "sea_orm")]
-    use sea_orm::{DbErr, DeriveValueType, QueryResult, TryFromU64, Value};
+    use sea_orm::{DbErr, DeriveValueType, TryFromU64, Value};
 
     #[derive(
         PartialEq, Eq, PartialOrd, Ord, Clone, Debug, Default, Hash, Serialize, Deserialize,
@@ -230,4 +253,5 @@ pub struct JWTClaims {
     pub iat: i64,
     pub username: String,
     pub groups: HashSet<String>,
+    pub mfa: i64,
 }

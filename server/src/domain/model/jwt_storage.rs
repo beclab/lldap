@@ -10,9 +10,11 @@ use crate::domain::types::UserId;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub jwt_hash: i64,
+    pub token: String,
     pub user_id: UserId,
     pub expiry_date: chrono::NaiveDateTime,
     pub blacklisted: bool,
+    pub mfa: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

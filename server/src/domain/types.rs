@@ -412,6 +412,12 @@ pub struct User {
     pub creation_date: NaiveDateTime,
     pub uuid: Uuid,
     pub attributes: Vec<AttributeValue>,
+    pub initialized: bool,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct UserTOTPSecret {
+    pub totp_secret: Option<String>,
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+use crate::infra::graphql::error::create_custom_error;
+use crate::infra::graphql::status::StatusReason;
 use crate::{
     domain::{handler::BackendHandler, types::UserId},
     infra::{
@@ -24,8 +26,6 @@ use juniper::{
     EmptySubscription, FieldError, RootNode, ScalarValue,
 };
 use tracing::debug;
-use crate::infra::graphql::error::create_custom_error;
-use crate::infra::graphql::status::StatusReason;
 
 pub struct Context<Handler: BackendHandler> {
     pub handler: AccessControlledBackendHandler<Handler>,
@@ -39,9 +39,9 @@ pub fn field_error_callback<'a>(
     move || {
         span.in_scope(|| debug!("Unauthorized"));
         create_custom_error(
-        StatusCode::FORBIDDEN.as_u16() as i32,
-        StatusReason::Forbidden.as_str(),
-        error_message,
+            StatusCode::FORBIDDEN.as_u16() as i32,
+            StatusReason::Forbidden.as_str(),
+            error_message,
         )
     }
 }

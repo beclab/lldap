@@ -3,46 +3,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::types::{LoginRecord, UserId};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq,Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "login_record")]
 pub struct Model {
-    #[sea_orm(
-        primary_key,
-        unique,
-        auto_increment = true,
-        column_name = "id"
-    )]
+    #[sea_orm(primary_key, unique, auto_increment = true, column_name = "id")]
     #[serde(skip_deserializing)]
     pub id: i32,
 
-    #[sea_orm(
-        column_name = "user_id",
-    )]
+    #[sea_orm(column_name = "user_id")]
     pub user_id: UserId,
 
-    #[sea_orm(
-        column_name = "success",
-    )]
+    #[sea_orm(column_name = "success")]
     pub success: bool,
 
-    #[sea_orm(
-        column_name = "reason"
-    )]
+    #[sea_orm(column_name = "reason")]
     pub reason: String,
 
-    #[sea_orm(
-        column_name = "source_ip"
-    )]
+    #[sea_orm(column_name = "source_ip")]
     pub source_ip: String,
 
-    #[sea_orm(
-        column_name = "user_agent"
-    )]
+    #[sea_orm(column_name = "user_agent")]
     pub user_agent: String,
 
-    #[sea_orm(
-        column_name = "creation_date"
-    )]
+    #[sea_orm(column_name = "creation_date")]
     pub creation_date: chrono::NaiveDateTime,
 }
 
@@ -56,7 +39,7 @@ pub enum Relation {
     )]
     Users,
 }
-impl Related<super::users::Entity> for Entity  {
+impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Users.def()
     }
