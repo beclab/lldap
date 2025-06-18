@@ -263,6 +263,7 @@ impl TcpBackendHandler for SqlBackendHandler {
         let tokens = model::JwtStorage::find()
             .select_only()
             .columns([JwtStorageColumn::Token, JwtStorageColumn::Blacklisted])
+            .filter(JwtStorageColumn::Token.is_not_null())
             .into_tuple::<(String, bool)>()
             .all(&self.sql_pool)
             .await?

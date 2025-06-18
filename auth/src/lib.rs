@@ -73,6 +73,11 @@ pub mod login {
     pub struct TokenVerifyRequest {
         pub access_token: String,
     }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TokenInvalidateRequest {
+        pub access_token: String,
+    }
 }
 
 /// The messages for the 3-step OPAQUE registration process.

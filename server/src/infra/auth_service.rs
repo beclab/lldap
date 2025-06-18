@@ -334,37 +334,30 @@ async fn token_list<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
-    let auth_header = http_request
-        .headers()
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .ok_or_else(|| {
-            TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
-        })?;
-
-    let validation_result = check_if_token_is_valid(&data, auth_header)
-        .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
-    // let user_id = data
-    //     .get_tcp_handler()
-    //     .get_user_id_for_password_reset_token(token)
-    //     .await
-    //     .map_err(|e| {
-    //         debug!("Reset token error: {e:#}");
-    //         TcpError::NotFoundError("Wrong or expired reset token".to_owned())
+    // let auth_header = http_request
+    //     .headers()
+    //     .get("Authorization")
+    //     .and_then(|h| h.to_str().ok())
+    //     .and_then(|h| h.strip_prefix("Bearer "))
+    //     .ok_or_else(|| {
+    //         TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
     //     })?;
-    let user_id = &validation_result.user;
-    let user_is_admin = data
-        .get_readonly_handler()
-        .get_user_groups(&user_id)
-        .await?
-        .iter()
-        .any(|g| g.display_name == "lldap_admin".into());
-    if !user_is_admin {
-        return Err(TcpError::UnauthorizedError(
-            "only admin user can list access token".to_owned(),
-        ));
-    }
+    //
+    // let validation_result = check_if_token_is_valid(&data, auth_header)
+    //     .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+
+    // let user_id = &validation_result.user;
+    // let user_is_admin = data
+    //     .get_readonly_handler()
+    //     .get_user_groups(&user_id)
+    //     .await?
+    //     .iter()
+    //     .any(|g| g.display_name == "lldap_admin".into());
+    // if !user_is_admin {
+    //     return Err(TcpError::UnauthorizedError(
+    //         "only admin user can list access token".to_owned(),
+    //     ));
+    // }
 
     let tokens = data.get_tcp_handler().access_token_list().await?;
     Ok(HttpResponse::Ok().json(tokens))
@@ -399,7 +392,7 @@ where
 
     let token: Token<_> =
         VerifyWithKey::verify_with_key(access_token.clone().as_str(), &data.jwt_key)
-            .map_err(|_| anyhow!("Invalid JWT"))?;
+            .map_err(|_| anyhow!("access_token verify invalid JWT"))?;
 
     let naive_datetime: NaiveDateTime =
         NaiveDateTime::from_timestamp_opt(token.claims().exp, 0).unwrap();
@@ -1072,6 +1065,51 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
     ))
 }
 
+async fn access_token_invalidate_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenInvalidateRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    match access_token_invalidate(data, request, http_request).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(err) => {HttpResponse::BadRequest().body(err.to_string())}
+    }
+}
+
+async fn access_token_invalidate<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenInvalidateRequest>,
+    http_request: HttpRequest,
+) -> Result<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let login::TokenInvalidateRequest { access_token } = request.into_inner();
+    let token: Token<_> =
+    VerifyWithKey::verify_with_key(access_token.as_str(), &data.jwt_key)
+        .map_err(|_| anyhow!("access_token invalidate invalid JWT"))?;
+
+    let naive_datetime: NaiveDateTime =
+        NaiveDateTime::from_timestamp_opt(token.claims().exp, 0)
+            .ok_or_else(|| anyhow!("Invalid expiration time"))?;
+    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
+    if exp_utc.lt(&Utc::now()) {
+        return Ok(HttpResponse::Ok().finish());
+    }
+
+    let jwt_hash = default_hash(&access_token);
+    if data.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
+        return Ok(HttpResponse::Ok().finish());
+    }
+
+    data.jwt_blacklist.write().unwrap().insert(jwt_hash);
+    Ok(HttpResponse::Ok().finish())
+
+}
+
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -1117,6 +1155,10 @@ where
         .service(
             web::resource("/token/verify")
                 .route(web::post().to(access_token_verify_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/token/invalidate")
+        .route(web::post().to(access_token_invalidate_handler::<Backend>)),
         );
     if enable_password_reset {
         cfg.service(
