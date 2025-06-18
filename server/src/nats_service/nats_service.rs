@@ -10,6 +10,8 @@ pub async fn publish_nats_event(subject: String, event: serde_json::Value) -> Re
     let nats_url = format!("nats://{nats_host}:{nats_port}");
 
     let client = ConnectOptions::new()
+        .connection_timeout(std::time::Duration::from_secs(2))
+        .request_timeout(Some(std::time::Duration::from_secs(2)))
         .user_and_password(nats_user, nats_password)
         .connect(nats_url).await?;
     let js = async_nats::jetstream::new(client);
