@@ -5,21 +5,28 @@ use actix_web::{
     web, HttpRequest, HttpResponse,
 };
 use actix_web_httpauth::extractors::bearer::BearerAuth;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::prelude::*;
 use futures::future::{ok, Ready};
 use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
-use sha2::Sha512;
-use std::{collections::HashSet, env, hash::Hash, pin::Pin, task::{Context, Poll}};
-use log::{error};
+use log::error;
+use rand::Rng;
+use sea_orm::ColIdx;
 use serde_json::json;
+use sha2::Sha512;
+use std::{
+    collections::HashSet,
+    env,
+    hash::Hash,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
-use lldap_auth::{login, password_reset, registration, JWTClaims};
-
+use crate::nats_service::publish_nats_event;
 use crate::{
     domain::{
         error::DomainError,
@@ -33,7 +40,8 @@ use crate::{
         tcp_server::{error_to_http_response, AppState, TcpError, TcpResult},
     },
 };
-use crate::nats_service::publish_nats_event;
+use lldap_auth::types::CaseInsensitiveString;
+use lldap_auth::{login, password_reset, registration, JWTClaims};
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;
@@ -60,6 +68,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     key: &Hmac<Sha512>,
     user: &UserId,
     groups: HashSet<GroupDetails>,
+    mfa: i64,
 ) -> SignedToken {
     let exp_utc = Utc::now() + chrono::Duration::days(365);
     let claims = JWTClaims {
@@ -70,6 +79,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
             .into_iter()
             .map(|g| g.display_name.into_string())
             .collect(),
+        mfa: mfa,
     };
     let expiry = exp_utc.naive_utc();
     let header = jwt::Header {
@@ -78,7 +88,13 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     };
     let token = jwt::Token::new(header, claims).sign_with_key(key).unwrap();
     handler
-        .register_jwt(user, default_hash(token.as_str()), expiry)
+        .register_jwt(
+            user,
+            default_hash(token.as_str()),
+            token.as_str(),
+            expiry,
+            mfa,
+        )
         .await
         .unwrap();
     token
@@ -114,7 +130,7 @@ where
 {
     let jwt_key = &data.jwt_key;
     let (refresh_token_hash, user) = get_refresh_token(request)?;
-    let found = data
+    let (found, mfa) = data
         .get_tcp_handler()
         .check_token(refresh_token_hash, &user)
         .await?;
@@ -128,7 +144,7 @@ where
         path.push('/');
     };
     let groups = data.get_readonly_handler().get_user_groups(&user).await?;
-    let token = create_jwt(data.get_tcp_handler(), jwt_key, &user, groups).await;
+    let token = create_jwt(data.get_tcp_handler(), jwt_key, &user, groups, mfa).await;
     Ok(HttpResponse::Ok()
         .cookie(
             Cookie::build("token", token.as_str())
@@ -253,7 +269,7 @@ where
         .delete_password_reset_token(token)
         .await;
     let groups = HashSet::new();
-    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, &user_id, groups).await;
+    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, &user_id, groups, 0).await;
     let mut path = data.server_url.path().to_string();
     if !path.ends_with('/') {
         path.push('/');
@@ -284,6 +300,253 @@ where
     get_password_reset_step2(data, request)
         .await
         .unwrap_or_else(error_to_http_response)
+}
+
+async fn totp_bind_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: web::Payload,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    totp_bind(data, payload, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+async fn token_list_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    token_list(data, request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+async fn token_list<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    // let auth_header = http_request
+    //     .headers()
+    //     .get("Authorization")
+    //     .and_then(|h| h.to_str().ok())
+    //     .and_then(|h| h.strip_prefix("Bearer "))
+    //     .ok_or_else(|| {
+    //         TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
+    //     })?;
+    //
+    // let validation_result = check_if_token_is_valid(&data, auth_header)
+    //     .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+
+    // let user_id = &validation_result.user;
+    // let user_is_admin = data
+    //     .get_readonly_handler()
+    //     .get_user_groups(&user_id)
+    //     .await?
+    //     .iter()
+    //     .any(|g| g.display_name == "lldap_admin".into());
+    // if !user_is_admin {
+    //     return Err(TcpError::UnauthorizedError(
+    //         "only admin user can list access token".to_owned(),
+    //     ));
+    // }
+
+    let tokens = data.get_tcp_handler().access_token_list().await?;
+    Ok(HttpResponse::Ok().json(tokens))
+}
+
+async fn access_token_verify_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenVerifyRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    match access_token_verify(data, request, http_request).await {
+        Ok(claims) => HttpResponse::Ok().json(claims),
+        Err(err) => HttpResponse::Ok().json(json!({
+            "status": "invalid token",
+            "error": err.to_string()
+        })),
+    }
+}
+
+async fn access_token_verify<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenVerifyRequest>,
+    http_request: HttpRequest,
+) -> Result<JWTClaims>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let login::TokenVerifyRequest { access_token } = request.into_inner();
+
+    let token: Token<_> =
+        VerifyWithKey::verify_with_key(access_token.clone().as_str(), &data.jwt_key)
+            .map_err(|_| anyhow!("access_token verify invalid JWT"))?;
+
+    let naive_datetime: NaiveDateTime =
+        NaiveDateTime::from_timestamp_opt(token.claims().exp, 0).unwrap();
+    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
+    if exp_utc.lt(&Utc::now()) {
+        return Err(anyhow!("Expired JWT"));
+    }
+    if token.header().algorithm != jwt::AlgorithmType::Hs512 {
+        return Err(anyhow!(format!(
+            "Unsupported JWT algorithm: '{:?}'. Supported ones are: ['HS512']",
+            token.header().algorithm
+        )));
+    }
+    let jwt_hash = default_hash(access_token.as_str());
+    if data.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
+        return Err(anyhow!("JWT was logged out"));
+    }
+    Ok(token.claims().clone())
+}
+
+async fn totp_bind<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: web::Payload,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    use actix_web::FromRequest;
+    let inner_payload = &mut payload.into_inner();
+    let validation_result = BearerAuth::from_request(&http_request, inner_payload)
+        .await
+        .ok()
+        .and_then(|bearer| check_if_token_is_valid(&data, bearer.token()).ok())
+        .ok_or_else(|| {
+            TcpError::UnauthorizedError("Not authorized to change the user's password".to_string())
+        })?;
+    let user_id = &validation_result.user;
+    let user_totp = data
+        .get_tcp_handler()
+        .get_user_totp_secret(&user_id)
+        .await?;
+    if let Some(totp_secret) = user_totp.totp_secret {
+        // let issuer = "lldap";
+        // let otp_auth_url = format!("otpauth://totp{}:{}?secret={}&issuer={}",
+        //                            issuer,user_id.as_str(),totp_secret, issuer
+        // );
+        return Ok(HttpResponse::Ok().json(json!({
+            "base32_secret": totp_secret
+        })));
+    }
+
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+
+    let totp = totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 1, 30, secret.to_vec()).unwrap();
+    let base32_secret = totp.get_secret_base32();
+
+    data.get_tcp_handler()
+        .update_user_totp_secret(&user_id, base32_secret.clone())
+        .await?;
+
+    // let issuer = "lldap";
+    // let otp_auth_url = format!("otpauth://totp{}:{}?secret={}&issuer={}",
+    //                            issuer,user_id.as_str(),base32_secret, issuer
+    // );
+    Ok(HttpResponse::Ok().json(json!({
+        "base32_secret":base32_secret,
+    })))
+}
+
+async fn totp_verify_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    // payload: web::Payload,
+    request: web::Json<login::TotpVerifyRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    totp_verify(data, request, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+async fn totp_verify<Backend>(
+    data: web::Data<AppState<Backend>>,
+    // payload: web::Payload,
+    request: web::Json<login::TotpVerifyRequest>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let auth_header = http_request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
+        })?;
+
+    let validation_result = check_if_token_is_valid(&data, auth_header)
+        .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+    let user_id = &validation_result.user;
+    let user_totp = data
+        .get_tcp_handler()
+        .get_user_totp_secret(&user_id)
+        .await?;
+    let totp_secret = match user_totp.totp_secret {
+        Some(totp_secret) => totp_secret,
+        None => {
+            return Err(TcpError::NotFoundError(
+                "totp not configured for this user".to_owned(),
+            ));
+        }
+    };
+    let totp = match totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1,
+        6,
+        1,
+        30,
+        totp_rs::Secret::Encoded(totp_secret).to_bytes().unwrap(),
+    ) {
+        Ok(totp) => totp,
+        Err(_e) => {
+            return Err(TcpError::NotFoundError(
+                "totp not configured for this user".to_owned(),
+            ));
+        }
+    };
+    let login::TotpVerifyRequest { token } = request.into_inner();
+
+    let is_valid = totp.check_current(&token).unwrap_or(false);
+    if !is_valid {
+        return Ok(HttpResponse::BadRequest().json(json!({"status":"KO","message":"Invalid token"})));
+    }
+    let groups = data
+        .get_readonly_handler()
+        .get_user_groups(&user_id)
+        .await?;
+
+    let (refresh_token, max_age) = data
+        .get_tcp_handler()
+        .create_refresh_token(&user_id, 1)
+        .await?;
+    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, &user_id, groups, 1).await;
+    let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
+
+    Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
+        token: token.as_str().to_owned(),
+        refresh_token: Some(refresh_token_plus_name),
+    }))
 }
 
 #[instrument(skip_all, level = "debug")]
@@ -371,8 +634,8 @@ where
     // The authentication was successful, we need to fetch the groups to create the JWT
     // token.
     let groups = data.get_readonly_handler().get_user_groups(name).await?;
-    let (refresh_token, max_age) = data.get_tcp_handler().create_refresh_token(name).await?;
-    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, name, groups).await;
+    let (refresh_token, max_age) = data.get_tcp_handler().create_refresh_token(name, 0).await?;
+    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, name, groups, 0).await;
     let refresh_token_plus_name = refresh_token + "+" + name.as_str();
     let mut path = data.server_url.path().to_string();
     if !path.ends_with('/') {
@@ -442,18 +705,21 @@ where
         name: username.clone(),
         password,
     };
-    let source_ip = http_request.connection_info().
-        realip_remote_addr().
-        unwrap_or("unknown").
-        to_string();
-    let user_agent = http_request.headers().
-        get("User-Agent").
-        and_then(|h| h.to_str().ok()).
-        unwrap_or("unknown").to_string();
+    let source_ip = http_request
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    let user_agent = http_request
+        .headers()
+        .get("User-Agent")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
 
     let bind_result = data.get_login_handler().bind(bind_request).await;
 
-    let mut record = LoginRecord{
+    let mut record = LoginRecord {
         user_id: username.clone(),
         success: true,
         reason: "authenticated successfully".to_string(),
@@ -463,33 +729,53 @@ where
 
     // publish a message if user delete success
     let user_login_event = serde_json::json!({
-                "event_type": "user_login",
-                "username": username.clone().as_str(),
-                "timestamp": Utc::now().to_rfc3339(),
-            });
+        "event_type": "user_login",
+        "username": username.clone().as_str(),
+        "timestamp": Utc::now().to_rfc3339(),
+    });
 
     match bind_result {
         Ok(_) => {
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
             }
-            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
+                .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-            if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_login_event.clone()).await {
-                log::info!("Failed to publish user login event: username: {}, err:{}", username.clone().as_str(),err);
+            if let Err(err) = publish_nats_event(
+                nats_subject_system_users.to_string(),
+                user_login_event.clone(),
+            )
+            .await
+            {
+                log::info!(
+                    "Failed to publish user login event: username: {}, err:{}",
+                    username.clone().as_str(),
+                    err
+                );
             }
             get_login_successful_response(&data, &username).await
         }
         Err(e) => {
             record.success = false;
-            record.reason = format!("{}",e);
+            record.reason = format!("{}", e);
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
             }
-            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS").unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
+            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
+                .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-            if let Err(err) = publish_nats_event(nats_subject_system_users.to_string(), user_login_event.clone()).await {
-                log::info!("Failed to publish user login event: user: {}, err:{}", username.clone().as_str(),err);
+            if let Err(err) = publish_nats_event(
+                nats_subject_system_users.to_string(),
+                user_login_event.clone(),
+            )
+            .await
+            {
+                log::info!(
+                    "Failed to publish user login event: user: {}, err:{}",
+                    username.clone().as_str(),
+                    err
+                );
             }
             return Err(e.into());
         }
@@ -504,7 +790,7 @@ async fn simple_login_handler<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
 {
-    simple_login(data, request,http_request)
+    simple_login(data, request, http_request)
         .await
         .unwrap_or_else(error_to_http_response)
 }
@@ -532,9 +818,9 @@ where
             &request,
             inner_payload,
         )
-            .await
-            .map_err(|e| TcpError::BadRequest(format!("{:#?}", e)))?
-            .into_inner();
+        .await
+        .map_err(|e| TcpError::BadRequest(format!("{:#?}", e)))?
+        .into_inner();
 
     let user_id = &registration_start_request.username;
     let user_is_admin = data
@@ -556,7 +842,15 @@ where
         pass_length
     );
 
-    data.get_opaque_handler().registration_password(&registration_start_request.username,registration_start_request.password.to_string()).await?;
+    data.get_opaque_handler()
+        .registration_password(
+            &registration_start_request.username,
+            registration_start_request.password.to_string(),
+        )
+        .await?;
+    data.get_tcp_handler()
+        .set_user_initialized(&registration_start_request.username)
+        .await?;
     get_login_successful_response(&data, &registration_start_request.username).await
 }
 
@@ -568,7 +862,7 @@ async fn simple_register_handler<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
 {
-    simple_register(data, payload,request)
+    simple_register(data, payload, request)
         .await
         .unwrap_or_else(error_to_http_response)
 }
@@ -745,8 +1039,9 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
 ) -> Result<ValidationResults, actix_web::Error> {
     let token: Token<_> = VerifyWithKey::verify_with_key(token_str, &state.jwt_key)
         .map_err(|_| ErrorUnauthorized("Invalid JWT"))?;
-    let naive_datetime:NaiveDateTime = NaiveDateTime::from_timestamp_opt(token.claims().exp,0).unwrap();
-    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime,Utc);
+    let naive_datetime: NaiveDateTime =
+        NaiveDateTime::from_timestamp_opt(token.claims().exp, 0).unwrap();
+    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
     if exp_utc.lt(&Utc::now()) {
         return Err(ErrorUnauthorized("Expired JWT"));
     }
@@ -770,6 +1065,51 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
     ))
 }
 
+async fn access_token_invalidate_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenInvalidateRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    match access_token_invalidate(data, request, http_request).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(err) => {HttpResponse::BadRequest().body(err.to_string())}
+    }
+}
+
+async fn access_token_invalidate<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenInvalidateRequest>,
+    http_request: HttpRequest,
+) -> Result<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let login::TokenInvalidateRequest { access_token } = request.into_inner();
+    let token: Token<_> =
+    VerifyWithKey::verify_with_key(access_token.as_str(), &data.jwt_key)
+        .map_err(|_| anyhow!("access_token invalidate invalid JWT"))?;
+
+    let naive_datetime: NaiveDateTime =
+        NaiveDateTime::from_timestamp_opt(token.claims().exp, 0)
+            .ok_or_else(|| anyhow!("Invalid expiration time"))?;
+    let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
+    if exp_utc.lt(&Utc::now()) {
+        return Ok(HttpResponse::Ok().finish());
+    }
+
+    let jwt_hash = default_hash(&access_token);
+    if data.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
+        return Ok(HttpResponse::Ok().finish());
+    }
+
+    data.jwt_blacklist.write().unwrap().insert(jwt_hash);
+    Ok(HttpResponse::Ok().finish())
+
+}
+
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -789,7 +1129,8 @@ where
         .service(web::resource("/refresh").route(web::get().to(get_refresh_handler::<Backend>)))
         .service(web::resource("/logout").route(web::get().to(get_logout_handler::<Backend>)))
         .service(
-            web::resource("/simple/register").route(web::post().to(simple_register_handler::<Backend>)),
+            web::resource("/simple/register")
+                .route(web::post().to(simple_register_handler::<Backend>)),
         )
         .service(
             web::scope("/opaque/register")
@@ -802,6 +1143,22 @@ where
                     web::resource("/finish")
                         .route(web::post().to(opaque_register_finish_handler::<Backend>)),
                 ),
+        )
+        .service(
+            web::scope("/totp")
+                .service(web::resource("/bind").route(web::post().to(totp_bind_handler::<Backend>)))
+                .service(
+                    web::resource("/verify").route(web::post().to(totp_verify_handler::<Backend>)),
+                ),
+        )
+        .service(web::resource("/token/list").route(web::get().to(token_list_handler::<Backend>)))
+        .service(
+            web::resource("/token/verify")
+                .route(web::post().to(access_token_verify_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/token/invalidate")
+        .route(web::post().to(access_token_invalidate_handler::<Backend>)),
         );
     if enable_password_reset {
         cfg.service(

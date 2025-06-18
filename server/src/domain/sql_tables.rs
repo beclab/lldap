@@ -11,7 +11,7 @@ pub type DbConnection = sea_orm::DatabaseConnection;
 #[derive(Copy, PartialEq, Eq, Debug, Clone, PartialOrd, Ord, DeriveValueType)]
 pub struct SchemaVersion(pub i16);
 
-pub const LAST_SCHEMA_VERSION: SchemaVersion = SchemaVersion(12);
+pub const LAST_SCHEMA_VERSION: SchemaVersion = SchemaVersion(13);
 
 #[derive(Copy, PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
 pub struct PrivateKeyHash(pub [u8; 32]);
@@ -49,6 +49,18 @@ pub async fn init_table(pool: &DbConnection) -> anyhow::Result<()> {
             version
         } else {
             upgrade_to_v1(pool).await?;
+            SchemaVersion(1)
+        }
+    };
+    // migrate_from_version(pool, version, LAST_SCHEMA_VERSION).await?;
+    Ok(())
+}
+
+pub async fn migration_table(pool: &DbConnection) -> anyhow::Result<()> {
+    let version = {
+        if let Some(version) = get_schema_version(pool).await {
+            version
+        } else {
             SchemaVersion(1)
         }
     };

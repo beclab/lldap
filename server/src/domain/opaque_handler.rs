@@ -22,8 +22,8 @@ pub trait OpaqueHandler: Send + Sync {
     async fn registration_password(
         &self,
         //request: registration::ClientSimpleRegisterRequest,
-        username : &UserId,
-        password: String
+        username: &UserId,
+        password: String,
     ) -> Result<()>;
 }
 

@@ -16,7 +16,6 @@ use sea_orm::{
 };
 use tracing::instrument;
 
-
 fn attribute_condition(name: AttributeName, value: Serialized) -> Cond {
     Expr::in_subquery(
         Expr::col(GroupColumn::GroupId.as_column_ref()),
@@ -157,11 +156,14 @@ impl GroupBackendHandler for SqlBackendHandler {
 
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn get_group_details_by_name(&self, group_name: String) -> Result<GroupDetails> {
-        let mut group_details = model::Group::find().filter(model::groups::Column::DisplayName.eq(group_name.clone()))
+        let mut group_details = model::Group::find()
+            .filter(model::groups::Column::DisplayName.eq(group_name.clone()))
             .one(&self.sql_pool)
             .await?
             .map(Into::<GroupDetails>::into)
-            .ok_or_else(|| DomainError::EntityNotFound(format!("No such group name={:?}", group_name.clone())))?;
+            .ok_or_else(|| {
+                DomainError::EntityNotFound(format!("No such group name={:?}", group_name.clone()))
+            })?;
         let attributes = model::GroupAttributes::find()
             .filter(model::GroupAttributesColumn::GroupId.eq(group_details.group_id))
             .order_by_asc(model::GroupAttributesColumn::AttributeName)
@@ -195,10 +197,15 @@ impl GroupBackendHandler for SqlBackendHandler {
             uuid: Set(uuid),
             ..Default::default()
         };
-        let exist_group = model::Group::find().filter(model::groups::Column::DisplayName.eq(request.display_name.clone()))
-            .one(&self.sql_pool).await?;
+        let exist_group = model::Group::find()
+            .filter(model::groups::Column::DisplayName.eq(request.display_name.clone()))
+            .one(&self.sql_pool)
+            .await?;
         if exist_group.is_some() {
-            return Err(DomainError::EntityAlreadyExists(format!("group {:?}", request.display_name.clone())));
+            return Err(DomainError::EntityAlreadyExists(format!(
+                "group {:?}",
+                request.display_name.clone()
+            )));
         }
         Ok(self
             .sql_pool

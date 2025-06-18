@@ -23,6 +23,7 @@ pub struct Model {
     pub totp_secret: Option<String>,
     pub mfa_type: Option<String>,
     pub uuid: Uuid,
+    pub initialized: bool,
 }
 
 impl EntityName for Entity {
@@ -43,6 +44,7 @@ pub enum Column {
     TotpSecret,
     MfaType,
     Uuid,
+    Initialized,
 }
 
 impl ColumnTrait for Column {
@@ -60,6 +62,7 @@ impl ColumnTrait for Column {
             Column::TotpSecret => ColumnType::String(Some(64)),
             Column::MfaType => ColumnType::String(Some(64)),
             Column::Uuid => ColumnType::String(Some(36)),
+            Column::Initialized => ColumnType::Boolean,
         }
         .def()
     }
@@ -126,6 +129,7 @@ impl From<Model> for crate::domain::types::User {
             creation_date: user.creation_date,
             uuid: user.uuid,
             attributes: Vec::new(),
+            initialized: user.initialized,
         }
     }
 }

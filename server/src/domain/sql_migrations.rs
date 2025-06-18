@@ -2,6 +2,7 @@ use crate::domain::{
     sql_tables::{DbConnection, SchemaVersion, LAST_SCHEMA_VERSION},
     types::{AttributeType, GroupId, JpegPhoto, Serialized, UserId, Uuid},
 };
+use crate::infra::jwt_sql_tables::{JwtRefreshStorage, JwtStorage};
 use itertools::Itertools;
 use sea_orm::{
     sea_query::{
@@ -30,6 +31,7 @@ pub enum Users {
     TotpSecret,
     MfaType,
     Uuid,
+    Initialized,
 }
 
 #[derive(DeriveIden, PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Copy)]
@@ -1159,38 +1161,32 @@ async fn migrate_to_v11(transaction: DatabaseTransaction) -> Result<DatabaseTran
                             .not_null()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(LoginRecord::UserId)
-                             .string_len(255)
-                             .not_null(),
+                    .col(
+                        ColumnDef::new(LoginRecord::UserId)
+                            .string_len(255)
+                            .not_null(),
                     )
-                    .col(ColumnDef::new(LoginRecord::Success)
-                             .boolean()
-                             .not_null(),
+                    .col(ColumnDef::new(LoginRecord::Success).boolean().not_null())
+                    .col(
+                        ColumnDef::new(LoginRecord::Reason)
+                            .string_len(255)
+                            .not_null(),
                     )
-                    .col(ColumnDef::new(LoginRecord::Reason)
-                             .string_len(255)
-                             .not_null(),
-                    )
-                    .col(ColumnDef::new(LoginRecord::SourceIp)
-                        .string_len(255)
-                    )
-                    .col(ColumnDef::new(LoginRecord::UserAgent)
-                        .string_len(1024)
-                    )
-                    .col(ColumnDef::new(Users::CreationDate).
-                        date_time()
-                        .not_null())
+                    .col(ColumnDef::new(LoginRecord::SourceIp).string_len(255))
+                    .col(ColumnDef::new(LoginRecord::UserAgent).string_len(1024))
+                    .col(ColumnDef::new(Users::CreationDate).date_time().not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("LoginRecordUserForeignKey")
                             .from(LoginRecord::Table, LoginRecord::UserId)
                             .to(Users::Table, LoginRecord::UserId)
-                            .on_delete(ForeignKeyAction::Cascade)
-                    )
+                            .on_delete(ForeignKeyAction::Cascade),
+                    ),
             ),
         )
-        .await {
-        error!("failed to migrate to v11,{}",e);
+        .await
+    {
+        error!("failed to migrate to v11,{}", e);
         return Err(e);
     }
     Ok(transaction)
@@ -1201,20 +1197,73 @@ async fn migrate_to_v12(transaction: DatabaseTransaction) -> Result<DatabaseTran
     transaction
         .execute(
             builder.build(
-                Table::alter()
-                    .table(Users::Table)
-                    .add_column_if_not_exists(ColumnDef::new(Users::UserIndex)
+                Table::alter().table(Users::Table).add_column_if_not_exists(
+                    ColumnDef::new(Users::UserIndex)
                         .integer()
                         .auto_increment()
                         .unique_key()
-                        .not_null()
-                    ),
+                        .not_null(),
+                ),
             ),
         )
         .await?;
     Ok(transaction)
 }
 
+async fn migrate_to_v13(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
+    let builder = transaction.get_database_backend();
+    transaction
+        .execute(
+            builder.build(
+                Table::alter().table(Users::Table).add_column_if_not_exists(
+                    ColumnDef::new(Users::Initialized)
+                        .boolean()
+                        .not_null()
+                        .default(false),
+                ),
+            ),
+        )
+        .await?;
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtStorage::Table)
+                    .add_column_if_not_exists(ColumnDef::new(JwtStorage::Token).string_len(1024)),
+            ),
+        )
+        .await?;
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtStorage::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(JwtStorage::Mfa)
+                            .big_integer()
+                            .not_null()
+                            .default(0),
+                    ),
+            ),
+        )
+        .await?;
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtRefreshStorage::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(JwtRefreshStorage::Mfa)
+                            .big_integer()
+                            .not_null()
+                            .default(0),
+                    ),
+            ),
+        )
+        .await?;
+
+    Ok(transaction)
+}
 
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
@@ -1248,6 +1297,7 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v10),
         to_sync!(migrate_to_v11),
         to_sync!(migrate_to_v12),
+        to_sync!(migrate_to_v13),
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

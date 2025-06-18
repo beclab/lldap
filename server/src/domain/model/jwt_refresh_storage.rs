@@ -12,6 +12,7 @@ pub struct Model {
     pub refresh_token_hash: i64,
     pub user_id: UserId,
     pub expiry_date: chrono::NaiveDateTime,
+    pub mfa: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

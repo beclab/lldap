@@ -12,6 +12,7 @@ pub enum JwtRefreshStorage {
     RefreshTokenHash,
     UserId,
     ExpiryDate,
+    Mfa,
 }
 
 /// Contains the blacklisted JWT that haven't expired yet.
@@ -19,9 +20,11 @@ pub enum JwtRefreshStorage {
 pub enum JwtStorage {
     Table,
     JwtHash,
+    Token,
     UserId,
     ExpiryDate,
     Blacklisted,
+    Mfa,
 }
 
 /// Contains the temporary tokens to reset the password, sent by email.

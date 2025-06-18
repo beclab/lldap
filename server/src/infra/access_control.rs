@@ -13,8 +13,8 @@ use crate::domain::{
     },
     schema::PublicSchema,
     types::{
-        AttributeName, Group, GroupDetails, GroupId, GroupName, LdapObjectClass, User,
-        UserAndGroups, UserId,LoginRecord
+        AttributeName, Group, GroupDetails, GroupId, GroupName, LdapObjectClass, LoginRecord, User,
+        UserAndGroups, UserId,
     },
 };
 
@@ -129,6 +129,7 @@ impl<Handler: BackendHandler> UserReadableBackendHandler for Handler {
     async fn get_user_details(&self, user_id: &UserId) -> Result<User> {
         <Handler as UserBackendHandler>::get_user_details(self, user_id).await
     }
+
     async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>> {
         <Handler as UserBackendHandler>::get_user_groups(self, user_id).await
     }
