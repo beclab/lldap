@@ -2,13 +2,20 @@ use async_nats::ConnectOptions;
 use log::info;
 use std::env;
 
-pub async fn publish_nats_event(
+pub fn publish_nats_event(subject: String, event: serde_json::Value) {
+    tokio::spawn(async move {
+        if let Err(e) = publish_nats_event_internal(subject.clone(), event.clone()).await {
+            info!("Failed to publish NATS event to subject {}: {}", subject, e);
+        }
+    });
+}
+pub async fn publish_nats_event_internal(
     subject: String,
     event: serde_json::Value,
 ) -> Result<(), anyhow::Error> {
     let nats_user = env::var("NATS_USERNAME").unwrap_or_else(|_| "unknown".to_string());
     let nats_password = env::var("NATS_PASSWORD").unwrap_or_else(|_| "unknown".to_string());
-    let nats_host = env::var("NATS_HOST").unwrap_or_else(|_| "nats".to_string());
+    let nats_host = env::var("NATS_HOST").unwrap_or_else(|_| "nats.os-platform".to_string());
     let nats_port = env::var("NATS_PORT").unwrap_or_else(|_| "4222".to_string());
     let nats_url = format!("nats://{nats_host}:{nats_port}");
 

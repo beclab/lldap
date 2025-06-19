@@ -26,6 +26,7 @@ use std::{
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
+use crate::nats_service::nats_service::publish_nats_event_internal;
 use crate::nats_service::publish_nats_event;
 use crate::{
     domain::{
@@ -529,7 +530,9 @@ where
 
     let is_valid = totp.check_current(&token).unwrap_or(false);
     if !is_valid {
-        return Ok(HttpResponse::BadRequest().json(json!({"status":"KO","message":"Invalid token"})));
+        return Ok(
+            HttpResponse::BadRequest().json(json!({"status":"KO","message":"Invalid token"}))
+        );
     }
     let groups = data
         .get_readonly_handler()
@@ -742,18 +745,11 @@ where
             let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
                 .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-            if let Err(err) = publish_nats_event(
+            publish_nats_event(
                 nats_subject_system_users.to_string(),
                 user_login_event.clone(),
-            )
-            .await
-            {
-                log::info!(
-                    "Failed to publish user login event: username: {}, err:{}",
-                    username.clone().as_str(),
-                    err
-                );
-            }
+            );
+
             get_login_successful_response(&data, &username).await
         }
         Err(e) => {
@@ -765,18 +761,11 @@ where
             let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
                 .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-            if let Err(err) = publish_nats_event(
+            publish_nats_event(
                 nats_subject_system_users.to_string(),
                 user_login_event.clone(),
-            )
-            .await
-            {
-                log::info!(
-                    "Failed to publish user login event: user: {}, err:{}",
-                    username.clone().as_str(),
-                    err
-                );
-            }
+            );
+
             return Err(e.into());
         }
     }
@@ -1075,7 +1064,7 @@ where
 {
     match access_token_invalidate(data, request, http_request).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(err) => {HttpResponse::BadRequest().body(err.to_string())}
+        Err(err) => HttpResponse::BadRequest().body(err.to_string()),
     }
 }
 
@@ -1088,13 +1077,11 @@ where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
     let login::TokenInvalidateRequest { access_token } = request.into_inner();
-    let token: Token<_> =
-    VerifyWithKey::verify_with_key(access_token.as_str(), &data.jwt_key)
+    let token: Token<_> = VerifyWithKey::verify_with_key(access_token.as_str(), &data.jwt_key)
         .map_err(|_| anyhow!("access_token invalidate invalid JWT"))?;
 
-    let naive_datetime: NaiveDateTime =
-        NaiveDateTime::from_timestamp_opt(token.claims().exp, 0)
-            .ok_or_else(|| anyhow!("Invalid expiration time"))?;
+    let naive_datetime: NaiveDateTime = NaiveDateTime::from_timestamp_opt(token.claims().exp, 0)
+        .ok_or_else(|| anyhow!("Invalid expiration time"))?;
     let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
     if exp_utc.lt(&Utc::now()) {
         return Ok(HttpResponse::Ok().finish());
@@ -1107,7 +1094,6 @@ where
 
     data.jwt_blacklist.write().unwrap().insert(jwt_hash);
     Ok(HttpResponse::Ok().finish())
-
 }
 
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
@@ -1158,7 +1144,7 @@ where
         )
         .service(
             web::resource("/token/invalidate")
-        .route(web::post().to(access_token_invalidate_handler::<Backend>)),
+                .route(web::post().to(access_token_invalidate_handler::<Backend>)),
         );
     if enable_password_reset {
         cfg.service(

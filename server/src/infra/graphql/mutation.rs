@@ -187,18 +187,10 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
             .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-        if let Err(err) = publish_nats_event(
+        publish_nats_event(
             nats_subject_system_users.to_string(),
             user_create_event.clone(),
-        )
-        .await
-        {
-            info!(
-                "Failed to publish user creation event: user: {}, err:{}",
-                user_id.clone().as_str(),
-                err
-            );
-        }
+        );
 
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
@@ -410,18 +402,10 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
             .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-        if let Err(err) = publish_nats_event(
+        publish_nats_event(
             nats_subject_system_users.to_string(),
             user_delete_event.clone(),
-        )
-        .await
-        {
-            info!(
-                "Failed to publish user delete event: user: {}, err:{}",
-                user_id.clone().as_str(),
-                err
-            );
-        }
+        );
         Ok(Success::new())
     }
 
@@ -460,17 +444,11 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
             .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-        if let Err(err) = publish_nats_event(
+        publish_nats_event(
             nats_subject_system_users.to_string(),
             group_delete_event.clone(),
-        )
-        .await
-        {
-            info!(
-                "Failed to publish group creation event: group: {}, err:{}",
-                group_details.display_name, err
-            );
-        }
+        );
+
         Ok(Success::new())
     }
 
@@ -721,17 +699,10 @@ async fn create_group_with_details<Handler: BackendHandler>(
     let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
         .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
 
-    if let Err(err) = publish_nats_event(
+    publish_nats_event(
         nats_subject_system_users.to_string(),
         group_create_event.clone(),
-    )
-    .await
-    {
-        info!(
-            "Failed to publish group creation event: group: {}, err:{}",
-            request.display_name, err
-        );
-    }
+    );
 
     let group_details = handler.get_group_details(group_id).instrument(span).await?;
     super::query::Group::<Handler>::from_group_details(group_details, Arc::new(schema))
