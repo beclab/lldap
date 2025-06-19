@@ -374,10 +374,7 @@ where
 {
     match access_token_verify(data, request, http_request).await {
         Ok(claims) => HttpResponse::Ok().json(claims),
-        Err(err) => HttpResponse::Ok().json(json!({
-            "status": "invalid token",
-            "error": err.to_string()
-        })),
+        Err(err) => HttpResponse::BadRequest().json(err.to_string()),
     }
 }
 
