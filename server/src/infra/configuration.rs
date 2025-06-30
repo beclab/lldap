@@ -96,6 +96,11 @@ pub struct Configuration {
     pub force_update_private_key: bool,
     #[builder(default = r#"DatabaseUrl::from("sqlite://users.db?mode=rwc")"#)]
     pub database_url: DatabaseUrl,
+    #[builder(default = "1")]
+    pub jwt_token_expiry_days: i64,
+    #[builder(default = "30")]
+    pub jwt_refresh_token_expiry_days: i64,
+
     #[builder(default)]
     pub ignored_user_attributes: Vec<AttributeName>,
     #[builder(default)]
@@ -415,6 +420,14 @@ impl ConfigOverrider for RunOpts {
 
         if let Some(database_url) = self.database_url.as_ref() {
             config.database_url = database_url.clone();
+        }
+
+        if let Some(jwt_token_expiry_days) = self.jwt_token_expiry_days.as_ref() {
+            config.jwt_token_expiry_days = *jwt_token_expiry_days;
+        }
+
+        if let Some(jwt_refresh_token_expiry_days) = self.jwt_refresh_token_expiry_days.as_ref() {
+            config.jwt_refresh_token_expiry_days = *jwt_refresh_token_expiry_days;
         }
 
         if let Some(force_ldap_user_pass_reset) = self.force_ldap_user_pass_reset {

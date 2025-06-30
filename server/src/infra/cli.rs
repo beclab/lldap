@@ -91,6 +91,12 @@ pub struct RunOpts {
     #[clap(short, long, env = "LLDAP_DATABASE_URL")]
     pub database_url: Option<DatabaseUrl>,
 
+    #[clap(long, env = "LLDAP_JWT_TOKEN_EXPIRY_DAYS")]
+    pub jwt_token_expiry_days: Option<i64>,
+
+    #[clap(long, env = "LLDAP_JWT_REFRESH_TOKEN_EXPIRY_DAYS")]
+    pub jwt_refresh_token_expiry_days: Option<i64>,
+
     /// Force admin password reset to the config value.
     #[clap(long, env = "LLDAP_FORCE_LADP_USER_PASS_RESET")]
     pub force_ldap_user_pass_reset: Option<bool>,
