@@ -113,6 +113,8 @@ fn http_config<Backend>(
     jwt_blacklist: HashSet<u64>,
     server_url: url::Url,
     mail_options: MailOptions,
+    jwt_token_expiry_days: i64,
+    jwt_refresh_token_expiry_days: i64,
 ) where
     Backend: TcpBackendHandler + BackendHandler + LoginHandler + OpaqueHandler + Clone + 'static,
 {
@@ -123,6 +125,8 @@ fn http_config<Backend>(
         jwt_blacklist: RwLock::new(jwt_blacklist),
         server_url,
         mail_options,
+        jwt_token_expiry_days,
+        jwt_refresh_token_expiry_days,
     }))
     .route(
         "/health",
@@ -159,6 +163,8 @@ pub(crate) struct AppState<Backend> {
     pub jwt_blacklist: RwLock<HashSet<u64>>,
     pub server_url: url::Url,
     pub mail_options: MailOptions,
+    pub jwt_token_expiry_days: i64,
+    pub jwt_refresh_token_expiry_days: i64,
 }
 
 impl<Backend: BackendHandler> AppState<Backend> {
@@ -197,6 +203,8 @@ where
         .context("while getting the jwt blacklist")?;
     let server_url = config.http_url.clone();
     let mail_options = config.smtp_options.clone();
+    let jwt_token_expiry_days = config.jwt_token_expiry_days;
+    let jwt_refresh_token_expiry_days = config.jwt_refresh_token_expiry_days;
     let verbose = config.verbose;
     info!("Starting the API/web server on port {}", config.http_port);
     server_builder
@@ -224,6 +232,8 @@ where
                                     jwt_blacklist,
                                     server_url,
                                     mail_options,
+                                    jwt_token_expiry_days,
+                                    jwt_refresh_token_expiry_days,
                                 )
                             }),
                         |_| AppConfig::default(),

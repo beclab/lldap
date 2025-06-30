@@ -49,6 +49,7 @@ impl TcpBackendHandler for SqlBackendHandler {
         &self,
         user: &UserId,
         mfa: i64,
+        jwt_refresh_token_expiry_days: i64,
     ) -> Result<(String, chrono::Duration)> {
         debug!(?user);
         // TODO: Initialize the rng only once. Maybe Arc<Cell>?

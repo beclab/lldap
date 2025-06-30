@@ -70,8 +70,9 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     user: &UserId,
     groups: HashSet<GroupDetails>,
     mfa: i64,
+    jwt_token_expiry_days: i64,
 ) -> SignedToken {
-    let exp_utc = Utc::now() + chrono::Duration::days(365);
+    let exp_utc = Utc::now() + chrono::Duration::days(jwt_token_expiry_days);
     let claims = JWTClaims {
         exp: exp_utc.timestamp(),
         iat: Utc::now().timestamp(),
@@ -145,7 +146,15 @@ where
         path.push('/');
     };
     let groups = data.get_readonly_handler().get_user_groups(&user).await?;
-    let token = create_jwt(data.get_tcp_handler(), jwt_key, &user, groups, mfa).await;
+    let token = create_jwt(
+        data.get_tcp_handler(),
+        jwt_key,
+        &user,
+        groups,
+        mfa,
+        data.jwt_token_expiry_days,
+    )
+    .await;
     Ok(HttpResponse::Ok()
         .cookie(
             Cookie::build("token", token.as_str())
@@ -270,7 +279,15 @@ where
         .delete_password_reset_token(token)
         .await;
     let groups = HashSet::new();
-    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, &user_id, groups, 0).await;
+    let token = create_jwt(
+        data.get_tcp_handler(),
+        &data.jwt_key,
+        &user_id,
+        groups,
+        0,
+        data.jwt_token_expiry_days,
+    )
+    .await;
     let mut path = data.server_url.path().to_string();
     if !path.ends_with('/') {
         path.push('/');
@@ -538,9 +555,17 @@ where
 
     let (refresh_token, max_age) = data
         .get_tcp_handler()
-        .create_refresh_token(&user_id, 1)
+        .create_refresh_token(&user_id, 1, data.jwt_refresh_token_expiry_days)
         .await?;
-    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, &user_id, groups, 1).await;
+    let token = create_jwt(
+        data.get_tcp_handler(),
+        &data.jwt_key,
+        &user_id,
+        groups,
+        1,
+        data.jwt_token_expiry_days,
+    )
+    .await;
     let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
 
     Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
@@ -634,8 +659,19 @@ where
     // The authentication was successful, we need to fetch the groups to create the JWT
     // token.
     let groups = data.get_readonly_handler().get_user_groups(name).await?;
-    let (refresh_token, max_age) = data.get_tcp_handler().create_refresh_token(name, 0).await?;
-    let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, name, groups, 0).await;
+    let (refresh_token, max_age) = data
+        .get_tcp_handler()
+        .create_refresh_token(name, 0, data.jwt_refresh_token_expiry_days)
+        .await?;
+    let token = create_jwt(
+        data.get_tcp_handler(),
+        &data.jwt_key,
+        name,
+        groups,
+        0,
+        data.jwt_token_expiry_days,
+    )
+    .await;
     let refresh_token_plus_name = refresh_token + "+" + name.as_str();
     let mut path = data.server_url.path().to_string();
     if !path.ends_with('/') {

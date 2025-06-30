@@ -13,6 +13,7 @@ pub trait TcpBackendHandler: Sync {
         &self,
         user: &UserId,
         mfa: i64,
+        jwt_refresh_token_expiry_days: i64,
     ) -> Result<(String, chrono::Duration)>;
     async fn register_jwt(
         &self,
