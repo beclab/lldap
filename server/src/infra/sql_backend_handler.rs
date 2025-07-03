@@ -276,6 +276,14 @@ impl TcpBackendHandler for SqlBackendHandler {
             .collect::<Vec<TokenInfo>>();
         Ok(tokens)
     }
+    #[instrument(skip_all, level = "debug")]
+    async fn delete_refresh_token_by_user(&self, user: &UserId) -> Result<()> {
+        model::JwtRefreshStorage::delete_many()
+            .filter(JwtRefreshStorageColumn::UserId.eq(user.clone()))
+            .exec(&self.sql_pool)
+            .await?;
+        Ok(())
+    }
 
     #[instrument(skip_all, level = "debug")]
     async fn set_user_initialized(&self, user_id: &UserId) -> Result<()> {

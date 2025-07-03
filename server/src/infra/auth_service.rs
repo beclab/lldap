@@ -1129,6 +1129,86 @@ where
     Ok(HttpResponse::Ok().finish())
 }
 
+async fn revoke_user_tokens_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    revoke_user_tokens(data, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+#[instrument(skip_all, level = "debug")]
+async fn revoke_user_tokens<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let username = http_request
+        .match_info()
+        .get("user")
+        .ok_or_else(|| TcpError::BadRequest("missing user".to_owned()))?;
+    let target_user_id = UserId::new(&username);
+
+    let auth_header = http_request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
+        })?;
+    let validation_request = check_if_token_is_valid(&data, auth_header).map_err(|_| {
+        TcpError::UnauthorizedError("Invalid token for revoke user token".to_owned())
+    })?;
+    let user_id = &validation_request.user;
+
+    let user_is_admin = data
+        .get_readonly_handler()
+        .get_user_groups(user_id)
+        .await?
+        .iter()
+        .any(|g| g.display_name == "lldap_admin".into());
+    if !validation_request.can_change_password(user_id, user_is_admin) {
+        return Err(TcpError::UnauthorizedError(
+            "Not authorized to revoke user token".to_owned(),
+        ));
+    }
+
+    let user_exists = data
+        .get_readonly_handler()
+        .list_users(
+            Some(UserRequestFilter::UserId(target_user_id.clone())),
+            false,
+        )
+        .await?
+        .len()
+        > 0;
+    if !user_exists {
+        return Err(TcpError::NotFoundError(format!(
+            "User '{}' not found",
+            target_user_id
+        )));
+    }
+    data.get_tcp_handler()
+        .delete_refresh_token_by_user(user_id)
+        .await?;
+
+    let new_blacklisted_jwt_hashes = data
+        .get_tcp_handler()
+        .blacklist_jwts(&target_user_id)
+        .await?;
+    let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
+    for jwt_hash in new_blacklisted_jwt_hashes {
+        jwt_blacklist.insert(jwt_hash);
+    }
+    Ok(HttpResponse::Ok().finish())
+}
+
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -1178,6 +1258,10 @@ where
         .service(
             web::resource("/token/invalidate")
                 .route(web::post().to(access_token_invalidate_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/revoke/{user}/token")
+                .route(web::post().to(revoke_user_tokens_handler::<Backend>)),
         );
     if enable_password_reset {
         cfg.service(
