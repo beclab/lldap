@@ -72,7 +72,9 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     mfa: i64,
     jwt_token_expiry_days: i64,
 ) -> SignedToken {
-    let exp_utc = Utc::now() + chrono::Duration::days(jwt_token_expiry_days);
+    // let exp_utc = Utc::now() + chrono::Duration::days(jwt_token_expiry_days);
+    let exp_utc = Utc::now() + chrono::Duration::minutes(10);
+
     let claims = JWTClaims {
         exp: exp_utc.timestamp(),
         iat: Utc::now().timestamp(),
