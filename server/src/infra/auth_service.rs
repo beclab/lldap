@@ -105,7 +105,11 @@ async fn create_jwt<Handler: TcpBackendHandler>(
 fn parse_refresh_token(token: &str) -> TcpResult<(u64, UserId)> {
     match token.split_once('+') {
         None => Err(DomainError::AuthenticationError("Invalid refresh token".to_string()).into()),
-        Some((token, u)) => Ok((default_hash(token), UserId::new(u))),
+        Some((token, u)) => {
+            info!("check_token refresh token...... {}", token);
+
+            Ok((default_hash(token), UserId::new(u)))
+        }
     }
 }
 
