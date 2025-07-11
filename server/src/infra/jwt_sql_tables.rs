@@ -13,6 +13,7 @@ pub enum JwtRefreshStorage {
     UserId,
     ExpiryDate,
     Mfa,
+    RefreshToken,
 }
 
 /// Contains the blacklisted JWT that haven't expired yet.

@@ -16,6 +16,7 @@ use sea_orm::{
     QuerySelect, Set, TransactionTrait,
 };
 use std::collections::HashSet;
+use log::info;
 use tracing::{debug, instrument};
 
 fn gen_random_string(len: usize) -> String {
@@ -67,6 +68,7 @@ impl TcpBackendHandler for SqlBackendHandler {
             user_id: user.clone(),
             expiry_date: chrono::Utc::now().naive_utc() + duration,
             mfa: mfa,
+            refresh_token: refresh_token.clone(),
         }
         .into_active_model();
         new_token.insert(&self.sql_pool).await?;
@@ -106,14 +108,23 @@ impl TcpBackendHandler for SqlBackendHandler {
     #[instrument(skip_all, level = "debug")]
     async fn check_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<(bool, i64)> {
         debug!(?user);
+        info!("check_token refresh token {}", refresh_token_hash);
+        info!("check_token user {}", user);
 
         let record = model::JwtRefreshStorage::find_by_id(refresh_token_hash as i64)
             .filter(JwtRefreshStorageColumn::UserId.eq(user))
             .one(&self.sql_pool)
             .await?;
         match record {
-            Some(record) => Ok((true, record.mfa)),
-            None => Ok((false, 0)),
+            Some(record) => {
+                info!("check_token record {:?}, token is {}", record,refresh_token_hash);
+                Ok((true, record.mfa))
+            },
+            None => {
+                info!("check_token record failed, token has {}",refresh_token_hash);
+
+                Ok((false, 0))
+            },
         }
     }
 
