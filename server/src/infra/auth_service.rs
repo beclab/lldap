@@ -134,7 +134,7 @@ where
     let (refresh_token_hash, user) = get_refresh_token(request)?;
     let (found, mfa) = data
         .get_tcp_handler()
-        .check_token(refresh_token_hash, &user)
+        .check_refresh_token(refresh_token_hash, &user)
         .await?;
     if !found {
         return Err(TcpError::DomainError(DomainError::AuthenticationError(

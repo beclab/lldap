@@ -23,7 +23,7 @@ pub trait TcpBackendHandler: Sync {
         expiry_date: NaiveDateTime,
         mfa: i64,
     ) -> Result<()>;
-    async fn check_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<(bool, i64)>;
+    async fn check_refresh_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<(bool, i64)>;
     async fn blacklist_jwts(&self, user: &UserId) -> Result<HashSet<u64>>;
     async fn delete_refresh_token(&self, refresh_token_hash: u64) -> Result<()>;
 
