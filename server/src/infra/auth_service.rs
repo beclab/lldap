@@ -43,6 +43,7 @@ use crate::{
 };
 use lldap_auth::types::CaseInsensitiveString;
 use lldap_auth::{login, password_reset, registration, JWTClaims};
+use rand::thread_rng;
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;
@@ -82,6 +83,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
             .map(|g| g.display_name.into_string())
             .collect(),
         mfa: mfa,
+        jid: thread_rng().gen::<u64>(),
     };
     let expiry = exp_utc.naive_utc();
     let header = jwt::Header {
