@@ -104,7 +104,11 @@ impl TcpBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug")]
-    async fn check_refresh_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<(bool, i64)> {
+    async fn check_refresh_token(
+        &self,
+        refresh_token_hash: u64,
+        user: &UserId,
+    ) -> Result<(bool, i64)> {
         debug!(?user);
 
         let record = model::JwtRefreshStorage::find_by_id(refresh_token_hash as i64)

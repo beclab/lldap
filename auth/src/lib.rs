@@ -259,4 +259,5 @@ pub struct JWTClaims {
     pub username: String,
     pub groups: HashSet<String>,
     pub mfa: i64,
+    pub jid: u64,
 }
