@@ -1211,6 +1211,59 @@ where
     Ok(HttpResponse::Ok().finish())
 }
 
+#[instrument(skip_all, level = "debug")]
+async fn verify_user_credentials<Backend>(
+    data: &web::Data<AppState<Backend>>,
+    username: UserId,
+    password: String,
+) -> TcpResult<bool>
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    let bind_request = BindRequest {
+        name: username.clone(),
+        password,
+    };
+
+    match data.get_login_handler().bind(bind_request).await {
+        Ok(_) => {
+            debug!("User credentials verified successfully for: {}", username);
+            Ok(true)
+        }
+        Err(e) => {
+            debug!(
+                "User credentials verification failed for {}: {}",
+                username, e
+            );
+            Ok(false)
+        }
+    }
+}
+
+async fn verify_user_credentials_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::ClientSimpleLoginRequest>,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    let login::ClientSimpleLoginRequest { username, password } = request.into_inner();
+
+    match verify_user_credentials(&data, username.clone(), password).await {
+        Ok(is_valid) => HttpResponse::Ok().json(serde_json::json!({
+            "username": username.as_str(),
+            "valid": is_valid,
+            "message": if is_valid { "Credentials are valid" } else { "Invalid credentials" }
+        })),
+        Err(e) => {
+            error!("Error verifying user credentials: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Internal server error during credential verification"
+            }))
+        }
+    }
+}
+
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -1264,6 +1317,10 @@ where
         .service(
             web::resource("/revoke/{user}/token")
                 .route(web::post().to(revoke_user_tokens_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/credentials/verify")
+                .route(web::post().to(verify_user_credentials_handler::<Backend>)),
         );
     if enable_password_reset {
         cfg.service(
