@@ -567,6 +567,63 @@ where
         1,
         data.jwt_token_expiry_days,
     )
+        .await;
+    let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
+
+    Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
+        token: token.as_str().to_owned(),
+        refresh_token: Some(refresh_token_plus_name),
+    }))
+}
+
+async fn get_sign_token_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    get_sign_token(data, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+async fn get_sign_token<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let auth_header = http_request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
+        })?;
+
+    let validation_result = check_if_token_is_valid(&data, auth_header)
+        .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+    let user_id = &validation_result.user;
+    let groups = data
+        .get_readonly_handler()
+        .get_user_groups(&user_id)
+        .await?;
+
+    let (refresh_token, max_age) = data
+        .get_tcp_handler()
+        .create_refresh_token(&user_id, 1, data.jwt_refresh_token_expiry_days)
+        .await?;
+    let token = create_jwt(
+        data.get_tcp_handler(),
+        &data.jwt_key,
+        &user_id,
+        groups,
+        1,
+        data.jwt_token_expiry_days,
+    )
     .await;
     let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
 
@@ -1264,6 +1321,7 @@ where
     }
 }
 
+
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -1305,6 +1363,10 @@ where
                     web::resource("/verify").route(web::post().to(totp_verify_handler::<Backend>)),
                 ),
         )
+        .service(
+            web::resource("/sign/token")
+                .route(web::post().to(get_sign_token_handler::<Backend>)),
+        )
         .service(web::resource("/token/list").route(web::get().to(token_list_handler::<Backend>)))
         .service(
             web::resource("/token/verify")
@@ -1322,6 +1384,7 @@ where
             web::resource("/credentials/verify")
                 .route(web::post().to(verify_user_credentials_handler::<Backend>)),
         );
+
     if enable_password_reset {
         cfg.service(
             web::resource("/reset/step1/{user_id}")
