@@ -1,11 +1,9 @@
 use std::clone::Clone;
-use std::env;
 use std::sync::Arc;
 
 use crate::domain::error::DomainError;
 use crate::infra::graphql::error::create_custom_error;
 use crate::infra::graphql::status::StatusReason;
-use crate::nats_service::publish_nats_event;
 use crate::{
     domain::{
         deserialize::deserialize_attribute_value,
@@ -30,7 +28,6 @@ use anyhow::{anyhow, Context as AnyhowContext};
 use base64::Engine;
 use http::StatusCode;
 use juniper::{graphql_object, FieldResult, GraphQLInputObject, GraphQLObject};
-use log::info;
 use tracing::{debug, debug_span, Instrument, Span};
 
 #[derive(PartialEq, Eq, Debug)]
@@ -177,20 +174,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 ),
                 _ => e.into(),
             })?;
-        // publish a message if user create success
-
-        let user_create_event = serde_json::json!({
-            "event_type": "user_created",
-            "username": user_id.clone().as_str(),
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-            .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-        publish_nats_event(
-            nats_subject_system_users.to_string(),
-            user_create_event.clone(),
-        );
 
         let user_details = handler.get_user_details(&user_id).instrument(span).await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
@@ -393,19 +376,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err("Cannot delete current user".into());
         }
         handler.delete_user(&user_id).instrument(span).await?;
-        // publish a message if user delete success
-        let user_delete_event = serde_json::json!({
-            "event_type": "user_deleted",
-            "username": user_id.clone().as_str(),
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-            .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-        publish_nats_event(
-            nats_subject_system_users.to_string(),
-            user_delete_event.clone(),
-        );
         Ok(Success::new())
     }
 
@@ -421,8 +391,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             span.in_scope(|| debug!("Cannot delete admin group"));
             return Err("Cannot delete admin group".into());
         }
-        let group_details = handler.get_group_details(GroupId(group_id)).await?;
-
         handler
             .delete_group(GroupId(group_id))
             .instrument(span)
@@ -435,19 +403,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 ),
                 _ => e.into(),
             })?;
-
-        let group_delete_event = serde_json::json!({
-            "event_type": "group_deleted",
-            "group_id": group_id,
-            "name": group_details.display_name,
-        });
-        let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-            .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-        publish_nats_event(
-            nats_subject_system_users.to_string(),
-            group_delete_event.clone(),
-        );
 
         Ok(Success::new())
     }
@@ -691,18 +646,6 @@ async fn create_group_with_details<Handler: BackendHandler>(
             ),
             _ => e.into(),
         })?;
-    let group_create_event = serde_json::json!({
-        "event_type": "group_created",
-        "group_id": group_id,
-        "name": request.clone().display_name,
-    });
-    let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-        .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-    publish_nats_event(
-        nats_subject_system_users.to_string(),
-        group_create_event.clone(),
-    );
 
     let group_details = handler.get_group_details(group_id).instrument(span).await?;
     super::query::Group::<Handler>::from_group_details(group_details, Arc::new(schema))

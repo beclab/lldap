@@ -13,12 +13,10 @@ use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
 use log::error;
 use rand::Rng;
-use sea_orm::ColIdx;
 use serde_json::json;
 use sha2::Sha512;
 use std::{
     collections::HashSet,
-    env,
     hash::Hash,
     pin::Pin,
     task::{Context, Poll},
@@ -26,8 +24,6 @@ use std::{
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
-use crate::nats_service::nats_service::publish_nats_event_internal;
-use crate::nats_service::publish_nats_event;
 use crate::{
     domain::{
         error::DomainError,
@@ -41,7 +37,6 @@ use crate::{
         tcp_server::{error_to_http_response, AppState, TcpError, TcpResult},
     },
 };
-use lldap_auth::types::CaseInsensitiveString;
 use lldap_auth::{login, password_reset, registration, JWTClaims};
 use rand::thread_rng;
 
@@ -567,7 +562,7 @@ where
         1,
         data.jwt_token_expiry_days,
     )
-        .await;
+    .await;
     let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
 
     Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
@@ -834,14 +829,6 @@ where
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
             }
-            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-                .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-            publish_nats_event(
-                nats_subject_system_users.to_string(),
-                user_login_event.clone(),
-            );
-
             get_login_successful_response(&data, &username).await
         }
         Err(e) => {
@@ -850,14 +837,6 @@ where
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
                 error!("failed to create login record: {}", e);
             }
-            let nats_subject_system_users = env::var("NATS_SUBJECT_SYSTEM_USERS")
-                .unwrap_or_else(|_| "terminus.os-system.system.users".to_string());
-
-            publish_nats_event(
-                nats_subject_system_users.to_string(),
-                user_login_event.clone(),
-            );
-
             return Err(e.into());
         }
     }
@@ -1321,7 +1300,6 @@ where
     }
 }
 
-
 pub fn configure_server<Backend>(cfg: &mut web::ServiceConfig, enable_password_reset: bool)
 where
     Backend: TcpBackendHandler + LoginHandler + OpaqueHandler + BackendHandler + 'static,
@@ -1364,8 +1342,7 @@ where
                 ),
         )
         .service(
-            web::resource("/sign/token")
-                .route(web::post().to(get_sign_token_handler::<Backend>)),
+            web::resource("/sign/token").route(web::post().to(get_sign_token_handler::<Backend>)),
         )
         .service(web::resource("/token/list").route(web::get().to(token_list_handler::<Backend>)))
         .service(
