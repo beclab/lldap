@@ -526,6 +526,7 @@ pub struct Group {
     pub uuid: Uuid,
     pub users: Vec<UserId>,
     pub attributes: Vec<AttributeValue>,
+    pub creator: UserId,
 }
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -545,6 +546,7 @@ pub struct GroupDetails {
     pub creation_date: NaiveDateTime,
     pub uuid: Uuid,
     pub attributes: Vec<AttributeValue>,
+    pub creator: UserId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
