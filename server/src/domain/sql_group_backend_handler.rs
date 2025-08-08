@@ -195,6 +195,7 @@ impl GroupBackendHandler for SqlBackendHandler {
             lowercase_display_name: Set(lower_display_name),
             creation_date: Set(now),
             uuid: Set(uuid),
+            creator: Set(request.creator),
             ..Default::default()
         };
         let exist_group = model::Group::find()
