@@ -465,7 +465,15 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 is_editable,
             })
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityAlreadyExists(_) => create_custom_error(
+                    StatusCode::CONFLICT.as_u16() as i32,
+                    StatusReason::AlreadyExists.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
         Ok(Success::new())
     }
 
@@ -527,7 +535,16 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         handler
             .delete_group_attribute(&name)
             .instrument(span)
-            .await?;
+            .await
+            .map_err(|e| match e {
+                DomainError::EntityNotFound(_) => create_custom_error(
+                    StatusCode::NOT_FOUND.as_u16() as i32,
+                    StatusReason::NotFound.as_str(),
+                    e.to_string().as_str(),
+                ),
+                _ => e.into(),
+            })?;
+
         Ok(Success::new())
     }
 

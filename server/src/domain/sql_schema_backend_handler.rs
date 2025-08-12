@@ -41,6 +41,15 @@ impl SchemaBackendHandler for SqlBackendHandler {
     }
 
     async fn add_group_attribute(&self, request: CreateAttributeRequest) -> Result<()> {
+        let exist_group_attribute = model::GroupAttributeSchema::find_by_id(request.name.clone())
+            .one(&self.sql_pool)
+            .await?;
+        if exist_group_attribute.is_some() {
+            return Err(DomainError::EntityAlreadyExists(format!(
+                "user {:?}",
+                request.name.as_str()
+            )));
+        }
         let new_attribute = model::group_attribute_schema::ActiveModel {
             attribute_name: Set(request.name),
             attribute_type: Set(request.attribute_type),
@@ -61,9 +70,15 @@ impl SchemaBackendHandler for SqlBackendHandler {
     }
 
     async fn delete_group_attribute(&self, name: &AttributeName) -> Result<()> {
-        model::GroupAttributeSchema::delete_by_id(name.clone())
+        let res = model::GroupAttributeSchema::delete_by_id(name.clone())
             .exec(&self.sql_pool)
             .await?;
+        if res.rows_affected == 0 {
+            return Err(DomainError::EntityNotFound(format!(
+                "No such group attribute : '{}'",
+                name
+            )));
+        }
         Ok(())
     }
 
