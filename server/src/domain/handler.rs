@@ -133,7 +133,6 @@ pub struct UpdateUserTOTPSecretRequest {
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CreateGroupRequest {
     pub display_name: GroupName,
-    pub creator: UserId,
     pub attributes: Vec<AttributeValue>,
 }
 

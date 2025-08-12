@@ -457,7 +457,6 @@ pub struct Group<Handler: BackendHandler> {
     creation_date: chrono::NaiveDateTime,
     uuid: String,
     attributes: Vec<AttributeValue<Handler>>,
-    creator: String,
     schema: Arc<PublicSchema>,
     _phantom: std::marker::PhantomData<Box<Handler>>,
 }
@@ -479,7 +478,6 @@ impl<Handler: BackendHandler> Group<Handler> {
                     AttributeValue::<Handler>::from_schema(a, &schema.get_schema().group_attributes)
                 })
                 .collect::<FieldResult<Vec<_>>>()?,
-            creator: group.creator.to_string(),
             schema,
             _phantom: std::marker::PhantomData,
         })
@@ -501,7 +499,6 @@ impl<Handler: BackendHandler> Group<Handler> {
                     AttributeValue::<Handler>::from_schema(a, &schema.get_schema().group_attributes)
                 })
                 .collect::<FieldResult<Vec<_>>>()?,
-            creator: group_details.creator.to_string(),
             schema,
             _phantom: std::marker::PhantomData,
         })
@@ -516,7 +513,6 @@ impl<Handler: BackendHandler> Clone for Group<Handler> {
             creation_date: self.creation_date,
             uuid: self.uuid.clone(),
             attributes: self.attributes.clone(),
-            creator: self.creator.clone(),
             schema: self.schema.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -541,10 +537,6 @@ impl<Handler: BackendHandler> Group<Handler> {
     /// User-defined attributes.
     fn attributes(&self) -> &[AttributeValue<Handler>] {
         &self.attributes
-    }
-
-    fn creator(&self) -> String {
-        self.creator.clone()
     }
 
     /// The groups to which this user belongs.
@@ -970,7 +962,6 @@ mod tests {
             group_id: GroupId(3),
             display_name: "Bobbersons".into(),
             creation_date: chrono::Utc.timestamp_nanos(42).naive_utc(),
-            creator: UserId::new("bob"),
             uuid: crate::uuid!("a1a2a3a4b1b2c1c2d1d2d3d4d5d6d7d8"),
             attributes: vec![DomainAttributeValue {
                 name: "club_name".into(),
@@ -981,7 +972,6 @@ mod tests {
             group_id: GroupId(7),
             display_name: "Jefferees".into(),
             creation_date: chrono::Utc.timestamp_nanos(12).naive_utc(),
-            creator: UserId::new("bob"),
             uuid: crate::uuid!("b1a2a3a4b1b2c1c2d1d2d3d4d5d6d7d8"),
             attributes: Vec::new(),
         });

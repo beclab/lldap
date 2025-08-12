@@ -42,7 +42,6 @@ pub enum Groups {
     LowercaseDisplayName,
     CreationDate,
     Uuid,
-    Creator,
 }
 
 #[derive(DeriveIden, Clone, Copy)]
@@ -1266,20 +1265,6 @@ async fn migrate_to_v13(transaction: DatabaseTransaction) -> Result<DatabaseTran
     Ok(transaction)
 }
 
-async fn migrate_to_v14(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
-    let builder = transaction.get_database_backend();
-    transaction
-        .execute(
-            builder.build(
-                Table::alter()
-                    .table(Groups::Table)
-                    .add_column_if_not_exists(ColumnDef::new(Groups::Creator).string().default("")),
-            ),
-        )
-        .await?;
-
-    Ok(transaction)
-}
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
     ($l:ident) => {
@@ -1313,7 +1298,6 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v11),
         to_sync!(migrate_to_v12),
         to_sync!(migrate_to_v13),
-        to_sync!(migrate_to_v14),
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

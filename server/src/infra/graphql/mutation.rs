@@ -79,7 +79,6 @@ pub struct CreateGroupInput {
     display_name: String,
     /// User-defined attributes.
     attributes: Option<Vec<AttributeValue>>,
-    creator: String,
 }
 
 #[derive(PartialEq, Eq, Debug, GraphQLInputObject)]
@@ -183,7 +182,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
     async fn create_group(
         context: &Context<Handler>,
         name: String,
-        creator: String,
     ) -> FieldResult<super::query::Group<Handler>> {
         let span = debug_span!("[GraphQL mutation] create_group");
         span.in_scope(|| {
@@ -193,7 +191,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             context,
             CreateGroupInput {
                 display_name: name,
-                creator: creator,
                 attributes: Some(Vec::new()),
             },
             span,
@@ -637,7 +634,6 @@ async fn create_group_with_details<Handler: BackendHandler>(
     let request = CreateGroupRequest {
         display_name: request.display_name.into(),
         attributes,
-        creator: request.creator.into(),
     };
     let group_id = handler
         .create_group(request.clone())

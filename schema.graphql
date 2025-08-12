@@ -6,7 +6,7 @@ type AttributeValue {
 
 type Mutation {
   createUser(user: CreateUserInput!): User!
-  createGroup(name: String!, creator: String!): Group!
+  createGroup(name: String!): Group!
   createGroupWithDetails(request: CreateGroupInput!): Group!
   updateUser(user: UpdateUserInput!): Success!
   updateGroup(group: UpdateGroupInput!): Success!
@@ -33,7 +33,6 @@ type Group {
   attributes: [AttributeValue!]!
   "The groups to which this user belongs."
   users: [User!]!
-  creator: String!
 }
 
 """
