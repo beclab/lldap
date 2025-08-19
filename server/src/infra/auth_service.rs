@@ -11,7 +11,6 @@ use futures::future::{ok, Ready};
 use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
-use log::error;
 use rand::Rng;
 use serde_json::json;
 use sha2::Sha512;
@@ -22,7 +21,13 @@ use std::{
     task::{Context, Poll},
 };
 use time::ext::NumericalDuration;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
+
+macro_rules! errorf {
+    ($($arg:tt)*) => {
+        error!(file = file!(), line = line!(), $($arg)*)
+    };
+}
 
 use crate::{
     domain::{
@@ -114,6 +119,7 @@ fn get_refresh_token(request: HttpRequest) -> TcpResult<(u64, UserId)> {
         (Some(c), _) => parse_refresh_token(c.value()),
         (_, Some(t)) => parse_refresh_token(t.to_str().unwrap()),
         (None, None) => {
+            error!("No refresh token found in cookie[refresh_token] or headers[refresh-token]");
             Err(DomainError::AuthenticationError("Missing refresh token".to_string()).into())
         }
     }
@@ -134,6 +140,10 @@ where
         .check_refresh_token(refresh_token_hash, &user)
         .await?;
     if !found {
+        errorf!(
+            "Refresh token not found, refresh_token_hash: {}",
+            refresh_token_hash
+        );
         return Err(TcpError::DomainError(DomainError::AuthenticationError(
             "Invalid refresh token".to_string(),
         )));
@@ -403,13 +413,18 @@ where
     let login::TokenVerifyRequest { access_token } = request.into_inner();
 
     let token: Token<_> =
-        VerifyWithKey::verify_with_key(access_token.clone().as_str(), &data.jwt_key)
-            .map_err(|_| anyhow!("access_token verify invalid JWT"))?;
+        VerifyWithKey::verify_with_key(access_token.clone().as_str(), &data.jwt_key).map_err(
+            |_| {
+                errorf!("invalid jwt access_token: {}", access_token.as_str());
+                anyhow!("access_token verify invalid JWT")
+            },
+        )?;
 
     let naive_datetime: NaiveDateTime =
         NaiveDateTime::from_timestamp_opt(token.claims().exp, 0).unwrap();
     let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
     if exp_utc.lt(&Utc::now()) {
+        errorf!("expired token: {}", access_token.as_str());
         return Err(anyhow!("Expired JWT"));
     }
     if token.header().algorithm != jwt::AlgorithmType::Hs512 {
@@ -420,6 +435,7 @@ where
     }
     let jwt_hash = default_hash(access_token.as_str());
     if data.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
+        errorf!("blacklisted token: {}", access_token.as_str());
         return Err(anyhow!("JWT was logged out"));
     }
     Ok(token.claims().clone())
@@ -440,7 +456,8 @@ where
         .ok()
         .and_then(|bearer| check_if_token_is_valid(&data, bearer.token()).ok())
         .ok_or_else(|| {
-            TcpError::UnauthorizedError("Not authorized to change the user's password".to_string())
+            errorf!("totp_bind invalid token");
+            TcpError::UnauthorizedError("invalid token to bind".to_string())
         })?;
     let user_id = &validation_result.user;
     let user_totp = data
@@ -508,8 +525,10 @@ where
             TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
         })?;
 
-    let validation_result = check_if_token_is_valid(&data, auth_header)
-        .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+    let validation_result = check_if_token_is_valid(&data, auth_header).map_err(|_| {
+        errorf!("invalid token: {}", auth_header);
+        TcpError::UnauthorizedError("Invalid token".to_string())
+    })?;
     let user_id = &validation_result.user;
     let user_totp = data
         .get_tcp_handler()
@@ -518,9 +537,10 @@ where
     let totp_secret = match user_totp.totp_secret {
         Some(totp_secret) => totp_secret,
         None => {
-            return Err(TcpError::NotFoundError(
-                "totp not configured for this user".to_owned(),
-            ));
+            return {
+                errorf!("no totp secret found for user: {}", user_id);
+                Err(TcpError::NotFoundError("no totp secret found".to_owned()))
+            }
         }
     };
     let totp = match totp_rs::TOTP::new(
@@ -532,6 +552,11 @@ where
     ) {
         Ok(totp) => totp,
         Err(_e) => {
+            errorf!(
+                "failed to create totp instance for user: {},err: {}",
+                user_id,
+                _e
+            );
             return Err(TcpError::NotFoundError(
                 "totp not configured for this user".to_owned(),
             ));
@@ -596,11 +621,14 @@ where
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or_else(|| {
+            errorf!("missing authorization header");
             TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
         })?;
 
-    let validation_result = check_if_token_is_valid(&data, auth_header)
-        .map_err(|_| TcpError::UnauthorizedError("Invalid token".to_string()))?;
+    let validation_result = check_if_token_is_valid(&data, auth_header).map_err(|_| {
+        errorf!("invalid token: {}", auth_header);
+        TcpError::UnauthorizedError("Invalid token".to_string())
+    })?;
     let user_id = &validation_result.user;
     let groups = data
         .get_readonly_handler()
@@ -817,13 +845,6 @@ where
         user_agent: user_agent,
     };
 
-    // publish a message if user delete success
-    let user_login_event = serde_json::json!({
-        "event_type": "user_login",
-        "username": username.clone().as_str(),
-        "timestamp": Utc::now().to_rfc3339(),
-    });
-
     match bind_result {
         Ok(_) => {
             if let Err(e) = data.get_tcp_handler().create_login_record(&record).await {
@@ -890,6 +911,10 @@ where
         .iter()
         .any(|g| g.display_name == "lldap_admin".into());
     if !validation_result.can_change_password(user_id, user_is_admin) {
+        errorf!(
+            "user {} is not authorized to change the user's password",
+            user_id
+        );
         return Err(TcpError::UnauthorizedError(
             "Not authorized to change the user's password".to_string(),
         ));
@@ -1097,12 +1122,16 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
     state: &AppState<Backend>,
     token_str: &str,
 ) -> Result<ValidationResults, actix_web::Error> {
-    let token: Token<_> = VerifyWithKey::verify_with_key(token_str, &state.jwt_key)
-        .map_err(|_| ErrorUnauthorized("Invalid JWT"))?;
+    let token: Token<_> =
+        VerifyWithKey::verify_with_key(token_str, &state.jwt_key).map_err(|_| {
+            errorf!("Invalid JWT token: {}", token_str);
+            ErrorUnauthorized("Invalid JWT")
+        })?;
     let naive_datetime: NaiveDateTime =
         NaiveDateTime::from_timestamp_opt(token.claims().exp, 0).unwrap();
     let exp_utc = DateTime::<Utc>::from_utc(naive_datetime, Utc);
     if exp_utc.lt(&Utc::now()) {
+        errorf!("Token expired: {}", token_str);
         return Err(ErrorUnauthorized("Expired JWT"));
     }
     if token.header().algorithm != jwt::AlgorithmType::Hs512 {
@@ -1113,6 +1142,7 @@ pub(crate) fn check_if_token_is_valid<Backend: BackendHandler>(
     }
     let jwt_hash = default_hash(token_str);
     if state.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
+        errorf!("JWT was logged out: {}", token_str);
         return Err(ErrorUnauthorized("JWT was logged out"));
     }
     Ok(state.backend_handler.get_permissions_from_groups(
@@ -1198,9 +1228,11 @@ where
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or_else(|| {
+            errorf!("Missing Authorization header");
             TcpError::UnauthorizedError("Missing or invalid authorization header".to_string())
         })?;
     let validation_request = check_if_token_is_valid(&data, auth_header).map_err(|_| {
+        errorf!("Invalid authorization header: {}", auth_header);
         TcpError::UnauthorizedError("Invalid token for revoke user token".to_owned())
     })?;
     let user_id = &validation_request.user;
@@ -1212,6 +1244,7 @@ where
         .iter()
         .any(|g| g.display_name == "lldap_admin".into());
     if !validation_request.can_change_password(user_id, user_is_admin) {
+        errorf!("user {} is not authorized to revoke user token", user_id);
         return Err(TcpError::UnauthorizedError(
             "Not authorized to revoke user token".to_owned(),
         ));
@@ -1227,6 +1260,7 @@ where
         .len()
         > 0;
     if !user_exists {
+        errorf!("user {} is not found", target_user_id);
         return Err(TcpError::NotFoundError(format!(
             "User '{}' not found",
             target_user_id
