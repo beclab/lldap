@@ -936,6 +936,30 @@ where
     data.get_tcp_handler()
         .set_user_initialized(&registration_start_request.username)
         .await?;
+    
+    // Delete all refresh tokens for this user after setting password
+    if let Err(e) = data.get_tcp_handler()
+        .delete_refresh_token_by_user(&registration_start_request.username)
+        .await
+    {
+        errorf!("failed to delete refresh tokens for user {}: {}", registration_start_request.username, e);
+        // Continue execution even if refresh token deletion fails
+    }
+    
+    // Blacklist all JWT tokens for this user after setting password
+    match data.get_tcp_handler().blacklist_jwts(&registration_start_request.username).await {
+        Ok(new_blacklisted_jwt_hashes) => {
+            let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
+            for jwt_hash in new_blacklisted_jwt_hashes {
+                jwt_blacklist.insert(jwt_hash);
+            }
+        }
+        Err(e) => {
+            errorf!("failed to blacklist JWT tokens for user {}: {}", registration_start_request.username, e);
+            // Continue execution even if JWT blacklisting fails
+        }
+    }
+    
     get_login_successful_response(&data, &registration_start_request.username).await
 }
 
