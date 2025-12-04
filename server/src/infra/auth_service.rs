@@ -126,6 +126,48 @@ fn get_refresh_token(request: HttpRequest) -> TcpResult<(u64, UserId)> {
 }
 
 #[instrument(skip_all, level = "debug")]
+async fn user_exists<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let username = http_request
+        .match_info()
+        .get("user")
+        .ok_or_else(|| TcpError::BadRequest("missing user".to_owned()))?;
+    let users = data
+        .get_readonly_handler()
+        .list_users(
+            Some(UserRequestFilter::UserId(UserId::new(username))),
+            false,
+        )
+        .await?;
+    let exists = !users.is_empty();
+    if !exists {
+        errorf!("user {} is not found", username);
+        return Err(TcpError::NotFoundError(format!(
+            "User '{}' not found",
+            username
+        )));
+    }
+    Ok(HttpResponse::Ok().finish())
+}
+
+async fn user_exists_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    user_exists(data, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+#[instrument(skip_all, level = "debug")]
 async fn get_refresh<Backend>(
     data: web::Data<AppState<Backend>>,
     request: HttpRequest,
@@ -936,18 +978,27 @@ where
     data.get_tcp_handler()
         .set_user_initialized(&registration_start_request.username)
         .await?;
-    
+
     // Delete all refresh tokens for this user after setting password
-    if let Err(e) = data.get_tcp_handler()
+    if let Err(e) = data
+        .get_tcp_handler()
         .delete_refresh_token_by_user(&registration_start_request.username)
         .await
     {
-        errorf!("failed to delete refresh tokens for user {}: {}", registration_start_request.username, e);
+        errorf!(
+            "failed to delete refresh tokens for user {}: {}",
+            registration_start_request.username,
+            e
+        );
         // Continue execution even if refresh token deletion fails
     }
-    
+
     // Blacklist all JWT tokens for this user after setting password
-    match data.get_tcp_handler().blacklist_jwts(&registration_start_request.username).await {
+    match data
+        .get_tcp_handler()
+        .blacklist_jwts(&registration_start_request.username)
+        .await
+    {
         Ok(new_blacklisted_jwt_hashes) => {
             let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
             for jwt_hash in new_blacklisted_jwt_hashes {
@@ -955,11 +1006,15 @@ where
             }
         }
         Err(e) => {
-            errorf!("failed to blacklist JWT tokens for user {}: {}", registration_start_request.username, e);
+            errorf!(
+                "failed to blacklist JWT tokens for user {}: {}",
+                registration_start_request.username,
+                e
+            );
             // Continue execution even if JWT blacklisting fails
         }
     }
-    
+
     get_login_successful_response(&data, &registration_start_request.username).await
 }
 
@@ -1418,6 +1473,9 @@ where
         .service(
             web::resource("/credentials/verify")
                 .route(web::post().to(verify_user_credentials_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/user/{user}").route(web::get().to(user_exists_handler::<Backend>)),
         );
 
     if enable_password_reset {
