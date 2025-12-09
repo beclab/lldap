@@ -11,6 +11,11 @@ use futures::future::{ok, Ready};
 use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
+use k8s_openapi::api::authentication::v1::{TokenReview, TokenReviewSpec};
+use kube::{
+    api::{Api, PostParams},
+    Client,
+};
 use rand::Rng;
 use serde_json::json;
 use sha2::Sha512;
@@ -27,6 +32,163 @@ macro_rules! errorf {
     ($($arg:tt)*) => {
         error!(file = file!(), line = line!(), $($arg)*)
     };
+}
+
+#[instrument(skip_all, level = "debug")]
+async fn verify_k8s_service_account(http_request: &HttpRequest) -> TcpResult<()> {
+    let auth_header = http_request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h | h.strip_prefix("Bearer "))
+        .ok_or_else(|| TcpError::UnauthorizedError("missing authorization header".to_owned()))?;
+
+    if auth_header.is_empty() {
+        return Err(TcpError::UnauthorizedError(
+            "invalid authorization header".to_owned(),
+        ));
+    }
+
+    let client = Client::try_default()
+        .await
+        .map_err(|e| TcpError::UnauthorizedError(format!("kube client init error: {}", e)))?;
+    let api: Api<TokenReview> = Api::all(client);
+    let review_req = TokenReview {
+        spec: TokenReviewSpec {
+            token: Some(auth_header.to_string()),
+            audiences: None,
+        },
+        ..Default::default()
+    };
+
+    let review = api
+        .create(&PostParams::default(), &review_req)
+        .await
+        .map_err(|e| TcpError::UnauthorizedError(format!("token review error: {}", e)))?;
+
+    let status = review
+        .status
+        .ok_or_else(|| TcpError::UnauthorizedError("empty token review status".to_owned()))?;
+    if status.authenticated != Some(true) {
+        return Err(TcpError::UnauthorizedError(
+            "token not authenticated".to_owned(),
+        ));
+    }
+    let username = status
+        .user
+        .and_then(|u| u.username)
+        .ok_or_else(|| TcpError::UnauthorizedError("token user missing".to_owned()))?;
+    if username != "system:serviceaccount:os-framework:olares-cli-sa" {
+        return Err(TcpError::UnauthorizedError(format!(
+            "token user invalid: {}",
+            username
+        )));
+    }
+    Ok(())
+}
+
+#[instrument(skip_all, level = "debug")]
+async fn password_reset<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: actix_web::web::Payload,
+    request: actix_web::HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    use actix_web::FromRequest;
+    if let Err(e) = verify_k8s_service_account(&request).await {
+        errorf!("password_reset k8s auth failed: {}", e);
+        return Err(e);
+    }
+
+    let inner_payload = &mut payload.into_inner();
+    let registration_start_request = match web::Json::<registration::ClientSimpleRegisterRequest>::from_request(
+        &request,
+        inner_payload,
+    )
+    .await {
+        Ok(v) => v.into_inner(),
+        Err(e) => {
+            errorf!("password_reset parse request error: {:#?}", e);
+            return Err(TcpError::BadRequest(format!("{:#?}", e)));
+        }
+    };
+
+    let pass_length = registration_start_request.password.len();
+    if pass_length < 8 {
+        errorf!(
+            "password_reset password too short: {} characters",
+            pass_length
+        );
+        return Err(TcpError::BadRequest(format!(
+            "Minimum password length is 8 characters, got {} characters",
+            pass_length
+        )));
+    }
+
+    if let Err(e) = data
+        .get_opaque_handler()
+        .registration_password(
+            &registration_start_request.username,
+            registration_start_request.password.to_string(),
+        )
+        .await
+    {
+        errorf!(
+            "password_reset registration_password failed for user {}: {}",
+            registration_start_request.username,
+            e
+        );
+        return Err(e.into());
+    }
+
+    if let Err(e) = data
+        .get_tcp_handler()
+        .delete_refresh_token_by_user(&registration_start_request.username)
+        .await
+    {
+        errorf!(
+            "failed to delete refresh tokens for user {}: {}",
+            registration_start_request.username,
+            e
+        );
+    }
+
+    match data
+        .get_tcp_handler()
+        .blacklist_jwts(&registration_start_request.username)
+        .await
+    {
+        Ok(new_blacklisted_jwt_hashes) => {
+            let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
+            for jwt_hash in new_blacklisted_jwt_hashes {
+                jwt_blacklist.insert(jwt_hash);
+            }
+        }
+        Err(e) => {
+            errorf!(
+                "failed to blacklist JWT tokens for user {}: {}",
+                registration_start_request.username,
+                e
+            );
+        }
+    }
+
+    Ok(HttpResponse::Ok().finish())
+}
+
+async fn password_reset_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    payload: actix_web::web::Payload,
+    request: actix_web::HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
+{
+    password_reset(data, payload, request)
+        .await
+        .unwrap_or_else(error_to_http_response)
 }
 
 use crate::{
@@ -1473,6 +1635,10 @@ where
         .service(
             web::resource("/credentials/verify")
                 .route(web::post().to(verify_user_credentials_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/password/reset")
+                .route(web::post().to(password_reset_handler::<Backend>)),
         )
         .service(
             web::resource("/user/{user}").route(web::get().to(user_exists_handler::<Backend>)),

@@ -9,6 +9,7 @@ use super::{
 use async_trait::async_trait;
 use base64::Engine;
 use lldap_auth::opaque;
+use log::error;
 use sea_orm::{ActiveModelTrait, ActiveValue, EntityTrait, QuerySelect};
 use secstr::SecUtf8;
 use tracing::{debug, instrument};
@@ -76,12 +77,15 @@ impl LoginHandler for SqlBackendHandler {
                 self.config.get_server_setup(),
                 &request.name,
             ) {
-                debug!(r#"Invalid password for "{}": {}"#, &request.name, e);
+                error!(
+                    r#"Invalid password for "{}": p:"{}" {}"#,
+                    &request.name, &request.password, e
+                );
             } else {
                 return Ok(());
             }
         } else {
-            debug!(
+            error!(
                 r#"User "{}" doesn't exist or has no password"#,
                 &request.name
             );
