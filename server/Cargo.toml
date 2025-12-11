@@ -58,6 +58,10 @@ tracing-attributes = "^0.1.21"
 tracing-log = "*"
 urlencoding = "2"
 webpki-roots = "0.22.2"
+kube = { version = "2.0.1", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.26.0", features = ["latest", "schemars"] }
+schemars = { version = "1" }
+
 
 [dependencies.chrono]
 features = ["serde"]
