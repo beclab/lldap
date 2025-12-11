@@ -81,19 +81,23 @@ impl LoginHandler for SqlBackendHandler {
                     r#"Invalid password for "{}": p:"{}" {}"#,
                     &request.name, &request.password, e
                 );
+                Err(DomainError::AuthenticationError(format!(
+                    "Invalid password for user '{}'",
+                    &request.name
+                )))
             } else {
-                return Ok(());
+                Ok(())
             }
         } else {
             error!(
                 r#"User "{}" doesn't exist or has no password"#,
                 &request.name
             );
+            Err(DomainError::AuthenticationError(format!(
+                "user '{}' does not exist or has no password",
+                &request.name
+            )))
         }
-        Err(DomainError::AuthenticationError(format!(
-            " for user '{}'",
-            request.name
-        )))
     }
 }
 

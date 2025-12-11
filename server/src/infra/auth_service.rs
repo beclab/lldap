@@ -40,7 +40,7 @@ async fn verify_k8s_service_account(http_request: &HttpRequest) -> TcpResult<()>
         .headers()
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
-        .and_then(|h | h.strip_prefix("Bearer "))
+        .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or_else(|| TcpError::UnauthorizedError("missing authorization header".to_owned()))?;
 
     if auth_header.is_empty() {
@@ -103,17 +103,19 @@ where
     }
 
     let inner_payload = &mut payload.into_inner();
-    let registration_start_request = match web::Json::<registration::ClientSimpleRegisterRequest>::from_request(
-        &request,
-        inner_payload,
-    )
-    .await {
-        Ok(v) => v.into_inner(),
-        Err(e) => {
-            errorf!("password_reset parse request error: {:#?}", e);
-            return Err(TcpError::BadRequest(format!("{:#?}", e)));
-        }
-    };
+    let registration_start_request =
+        match web::Json::<registration::ClientSimpleRegisterRequest>::from_request(
+            &request,
+            inner_payload,
+        )
+        .await
+        {
+            Ok(v) => v.into_inner(),
+            Err(e) => {
+                errorf!("password_reset parse request error: {:#?}", e);
+                return Err(TcpError::BadRequest(format!("{:#?}", e)));
+            }
+        };
 
     let pass_length = registration_start_request.password.len();
     if pass_length < 8 {
