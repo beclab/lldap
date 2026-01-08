@@ -101,6 +101,7 @@ async fn setup_sql_tables(database_url: &DatabaseUrl) -> Result<DatabaseConnecti
         sql_opt
             .max_connections(5)
             .sqlx_logging(true)
+            .acquire_timeout(Duration::from_secs(5))
             .sqlx_logging_level(log::LevelFilter::Debug);
         Database::connect(sql_opt).await?
     };
