@@ -78,8 +78,8 @@ impl LoginHandler for SqlBackendHandler {
                 &request.name,
             ) {
                 error!(
-                    r#"Invalid password for "{}": p:"{}" {}"#,
-                    &request.name, &request.password, e
+                    r#"Invalid password for "{}": {}"#,
+                    &request.name, e
                 );
                 Err(DomainError::AuthenticationError(format!(
                     "Invalid password for user '{}'",
