@@ -432,6 +432,7 @@ impl Default for User {
             creation_date: epoch,
             uuid: Uuid::from_name_and_date("", &epoch),
             attributes: Vec::new(),
+            initialized: false,
         }
     }
 }

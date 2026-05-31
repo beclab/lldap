@@ -71,6 +71,11 @@ mockall::mock! {
             &self,
             request: registration::ClientRegistrationFinishRequest
         ) -> Result<()>;
+        async fn registration_password(
+            &self,
+            username: &UserId,
+            password: String
+        ) -> Result<()>;
     }
 }
 
