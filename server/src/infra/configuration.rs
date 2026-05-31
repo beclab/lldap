@@ -80,6 +80,17 @@ pub struct Configuration {
     pub http_host: String,
     #[builder(default = "17170")]
     pub http_port: u16,
+    #[builder(default = r#"String::from("0.0.0.0")"#)]
+    pub http_readonly_host: String,
+    // Optional unauthenticated read-only snapshot port. Disabled (None) unless
+    // set; access control is expected to be enforced by the surrounding network
+    // (e.g. K8s NetworkPolicy / a proxy), not by LLDAP.
+    #[builder(default)]
+    pub http_readonly_port: Option<u16>,
+    // Comma-separated user attribute names to omit from the read-only snapshot
+    // (e.g. "jpegPhoto,foo"). Empty (default) exposes every attribute.
+    #[builder(default)]
+    pub http_readonly_deny_attributes: String,
     #[builder(default = r#"SecUtf8::from("secretjwtsecret")"#)]
     pub jwt_secret: SecUtf8,
     #[builder(default = r#"String::from("dc=example,dc=com")"#)]
@@ -412,6 +423,18 @@ impl ConfigOverrider for RunOpts {
 
         if let Some(port) = self.http_port {
             config.http_port = port;
+        }
+
+        if let Some(host) = self.http_readonly_host.as_ref() {
+            config.http_readonly_host = host.clone();
+        }
+
+        if let Some(port) = self.http_readonly_port {
+            config.http_readonly_port = Some(port);
+        }
+
+        if let Some(deny) = self.http_readonly_deny_attributes.as_ref() {
+            config.http_readonly_deny_attributes = deny.clone();
         }
 
         if let Some(url) = self.http_url.as_ref() {

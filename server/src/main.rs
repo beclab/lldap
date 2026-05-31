@@ -192,6 +192,13 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
         actix_server::Server::build(),
     )
     .context("while binding the LDAP server")?;
+    let server_builder = infra::tcp_server::build_readonly_server(
+        &config,
+        backend_handler.clone(),
+        server_builder,
+    )
+    .await
+    .context("while binding the read-only server")?;
     let server_builder =
         infra::tcp_server::build_tcp_server(&config, backend_handler, server_builder)
             .await

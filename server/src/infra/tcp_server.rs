@@ -248,3 +248,81 @@ where
             )
         })
 }
+
+/// Configures the minimal app served on the read-only listener: only the
+/// `/readonly/*` routes and a health check, with no auth middleware and no JWT
+/// handling. Uses a minimal `ReadonlyState` (no JWT keys / mail / server URL).
+fn readonly_http_config<Backend>(
+    cfg: &mut web::ServiceConfig,
+    backend_handler: Backend,
+    deny_attributes: HashSet<String>,
+) where
+    Backend: BackendHandler + Clone + 'static,
+{
+    cfg.app_data(web::Data::new(
+        super::readonly_server::ReadonlyState::<Backend> {
+            backend_handler: AccessControlledBackendHandler::new(backend_handler),
+            deny_attributes,
+        },
+    ))
+    .route(
+        "/health",
+        web::get().to(|| async { HttpResponse::Ok().finish() }),
+    )
+    .configure(super::readonly_server::configure_readonly_endpoint::<Backend>);
+}
+
+/// Binds an optional, unauthenticated read-only listener exposing only
+/// `GET /readonly/snapshot`. It is bound only when `http_readonly_port` is set;
+/// otherwise the server builder is returned unchanged. Access control is left to
+/// the surrounding network (e.g. K8s NetworkPolicy / a proxy).
+pub async fn build_readonly_server<Backend>(
+    config: &Configuration,
+    backend_handler: Backend,
+    server_builder: ServerBuilder,
+) -> Result<ServerBuilder>
+where
+    Backend: TcpBackendHandler + BackendHandler + LoginHandler + OpaqueHandler + Clone + 'static,
+{
+    let port = match config.http_readonly_port {
+        Some(port) => port,
+        None => return Ok(server_builder),
+    };
+    let host = config.http_readonly_host.clone();
+    let verbose = config.verbose;
+    let deny_attributes: HashSet<String> = config
+        .http_readonly_deny_attributes
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    info!(
+        "Starting the unauthenticated read-only API server on port {}",
+        port
+    );
+    server_builder
+        .bind("readonly", (host, port), move || {
+            let backend_handler = backend_handler.clone();
+            let deny_attributes = deny_attributes.clone();
+            HttpServiceBuilder::default()
+                .finish(map_config(
+                    App::new()
+                        .wrap(actix_web::middleware::Condition::new(
+                            verbose,
+                            tracing_actix_web::TracingLogger::<CustomRootSpanBuilder>::new(),
+                        ))
+                        .configure(move |cfg| {
+                            readonly_http_config(cfg, backend_handler, deny_attributes)
+                        }),
+                    |_| AppConfig::default(),
+                ))
+                .tcp()
+        })
+        .with_context(|| {
+            format!(
+                "While bringing up the read-only TCP server with port {}",
+                port
+            )
+        })
+}
