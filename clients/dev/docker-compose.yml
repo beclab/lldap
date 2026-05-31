@@ -1,0 +1,96 @@
+# Persistent local dev stack: lldap + nats (JetStream).
+#
+# Unlike clients/go/test (an ephemeral smoke-test stack torn down with
+# `down -v`), this stack is meant to stay up so a separately developed app
+# (e.g. files) can connect from its own compose via the shared `lldap-dev`
+# network, and so its data survives restarts.
+#
+#   docker compose pull && docker compose up -d
+
+services:
+  nats:
+    image: nats:2.10
+    command: ["-js", "--user", "lldap", "--pass", "secret"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - lldap-dev
+    restart: unless-stopped
+
+  # Postgres instead of SQLite: the repo's v12 migration adds an auto-increment
+  # column via ALTER TABLE, which SQLite rejects ("near AUTOINCREMENT").
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lldap
+      POSTGRES_PASSWORD: lldap
+      POSTGRES_DB: lldap
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lldap -d lldap"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - lldap_pgdata:/var/lib/postgresql/data
+    networks:
+      - lldap-dev
+    restart: unless-stopped
+
+  lldap:
+    # This is a mock LLDAP for other apps to develop against, so pull a published
+    # image instead of compiling Rust locally. The default is a temporary branch
+    # build (CI: .github/workflows/dev-image.yml) that already has the read-only
+    # snapshot port (17171); switch back to a released tag once the port ships in
+    # a real release. Override LLDAP_IMAGE to pin another tag.
+    image: ${LLDAP_IMAGE:-beclab/lldap:go-sync-sdk-dev}
+    # To test unreleased changes from this checkout instead, comment out the
+    # `image:` line above and uncomment this build block:
+    # build:
+    #   context: ../..   # repo root, to include this branch's NATS wiring
+    #   dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      LLDAP_JWT_SECRET: dev_jwt_secret_please_change
+      LLDAP_KEY_SEED: dev_key_seed
+      LLDAP_LDAP_BASE_DN: dc=example,dc=com
+      # Bootstrap admin: LLDAP creates this user on first boot (when lldap_admin
+      # has no members), so we make it `alice` instead of the default `admin` to
+      # avoid a separate service account. See server/src/main.rs.
+      LLDAP_LDAP_USER_DN: alice
+      LLDAP_LDAP_USER_EMAIL: alice@example.com
+      LLDAP_LDAP_USER_PASS: password
+      LLDAP_DATABASE_URL: "postgres://lldap:lldap@postgres/lldap"
+      LLDAP_VERBOSE: "true"
+      # Unauthenticated read-only snapshot port (GET /readonly/snapshot); this is
+      # the endpoint the Go SDK consumes. Access control is left to the network
+      # layer. The default `go-sync-sdk-dev` image already has this port; an older
+      # released image would ignore it (use the `build:` block above instead).
+      LLDAP_HTTP_READONLY_PORT: "17171"
+      # avatar is a base64 JpegPhoto blob, useless for identity sync; keep it
+      # out of the snapshot. The denylist matches the stored attribute name.
+      LLDAP_HTTP_READONLY_DENY_ATTRIBUTES: avatar
+      NATS_HOST: nats
+      NATS_PORT: "4222"
+      NATS_USERNAME: lldap
+      NATS_PASSWORD: secret
+    ports:
+      - "17170:17170"
+      - "17171:17171"
+      - "3890:3890"
+    networks:
+      - lldap-dev
+    restart: unless-stopped
+
+volumes:
+  lldap_pgdata:
+
+# This compose owns the network and gives it a stable name; other compose
+# projects join it with `external: true`.
+networks:
+  lldap-dev:
+    name: lldap-dev
