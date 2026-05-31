@@ -1,0 +1,54 @@
+services:
+  nats:
+    image: nats:2.10
+    command: ["-js", "--user", "lldap", "--pass", "secret"]
+    ports:
+      - "4222:4222"
+
+  # Postgres instead of SQLite: the repo's v12 migration adds an auto-increment
+  # column via ALTER TABLE, which SQLite rejects ("near AUTOINCREMENT").
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lldap
+      POSTGRES_PASSWORD: lldap
+      POSTGRES_DB: lldap
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lldap -d lldap"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  lldap:
+    # The SDK consumer reads the unauthenticated read-only port, which ships only
+    # in this checkout (not in any published image), so build from source.
+    build:
+      context: ../..   # repo root
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      LLDAP_JWT_SECRET: smoke_jwt_secret_please_change
+      LLDAP_KEY_SEED: smoke_key_seed
+      LLDAP_LDAP_BASE_DN: dc=example,dc=com
+      LLDAP_LDAP_USER_PASS: password
+      LLDAP_DATABASE_URL: "postgres://lldap:lldap@postgres/lldap"
+      LLDAP_VERBOSE: "true"
+      # Unauthenticated read-only snapshot port the SDK example consumes.
+      LLDAP_HTTP_READONLY_PORT: "17171"
+      NATS_HOST: nats
+      NATS_PORT: "4222"
+      NATS_USERNAME: lldap
+      NATS_PASSWORD: secret
+    ports:
+      - "17170:17170"
+      - "17171:17171"
+      - "3890:3890"
+
+# Named so the test can publish via a nats-box container joined to this network.
+networks:
+  default:
+    name: lldap-smoke
