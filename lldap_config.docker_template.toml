@@ -30,6 +30,20 @@
 ## administration.
 #http_port = 17170
 
+## Optional unauthenticated read-only snapshot endpoint (GET /readonly/snapshot).
+## Disabled unless "http_readonly_port" is set. It has NO authentication; access
+## control must be enforced by the surrounding network (e.g. a K8s NetworkPolicy
+## or a reverse proxy). The JSON mirrors the GraphQL snapshot of users and groups.
+#http_readonly_host = "0.0.0.0"
+#http_readonly_port = 17171
+## Comma-separated attribute names to omit from that snapshot (applies to both
+## user and group attributes), e.g. to hide large or sensitive values.
+## Recommended: "avatar" (a base64 image blob, useless for account sync). Note
+## that denying "first_name"/"last_name" also blanks the derived
+## firstName/lastName fields, since those are derived from the attributes.
+## Empty (default) exposes every attribute.
+#http_readonly_deny_attributes = "avatar"
+
 ## The public URL of the server, for password reset links.
 #http_url = "http://localhost"
 

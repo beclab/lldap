@@ -1,0 +1,67 @@
+# Temporary: builds a test image for the feat/lldap-go-sync-sdk branch so the
+# dev stack (clients/dev) can pull an image that already has the read-only
+# snapshot port. Remove once the read-only port ships in a tagged release.
+name: Build LLDAP dev test image
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/lldap-go-sync-sdk"
+
+jobs:
+  publish_dockerhub_amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASS }}
+
+      - name: Build lldap and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          push: true
+          tags: beclab/lldap:go-sync-sdk-dev-amd64
+          file: Dockerfile
+          platforms: linux/amd64
+
+  publish_dockerhub_arm64:
+    runs-on: self-hosted
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASS }}
+
+      - name: Build lldap and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          push: true
+          tags: beclab/lldap:go-sync-sdk-dev-arm64
+          file: Dockerfile
+          platforms: linux/arm64
+
+  publish_manifest:
+    needs:
+      - publish_dockerhub_amd64
+      - publish_dockerhub_arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASS }}
+
+      - name: Push manifest
+        run: |
+          docker manifest create beclab/lldap:go-sync-sdk-dev --amend beclab/lldap:go-sync-sdk-dev-amd64 --amend beclab/lldap:go-sync-sdk-dev-arm64
+          docker manifest push beclab/lldap:go-sync-sdk-dev

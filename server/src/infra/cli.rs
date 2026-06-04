@@ -83,6 +83,19 @@ pub struct RunOpts {
     #[clap(long, env = "LLDAP_HTTP_PORT")]
     pub http_port: Option<u16>,
 
+    /// Change the read-only snapshot HTTP host. Default: "0.0.0.0"
+    #[clap(long, env = "LLDAP_HTTP_READONLY_HOST")]
+    pub http_readonly_host: Option<String>,
+
+    /// Optional unauthenticated read-only snapshot port (GET /readonly/snapshot).
+    /// Disabled unless set; protect it at the network layer.
+    #[clap(long, env = "LLDAP_HTTP_READONLY_PORT")]
+    pub http_readonly_port: Option<u16>,
+
+    /// Comma-separated user attribute names to omit from the read-only snapshot.
+    #[clap(long, env = "LLDAP_HTTP_READONLY_DENY_ATTRIBUTES")]
+    pub http_readonly_deny_attributes: Option<String>,
+
     /// URL of the server, for password reset links.
     #[clap(long, env = "LLDAP_HTTP_URL")]
     pub http_url: Option<Url>,
