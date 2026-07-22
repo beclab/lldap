@@ -427,6 +427,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "ascii"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -689,7 +695,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afa748e348ad3be8263be728124b24a24f268266f6f5d58af9d75f6a40b5c587"
 dependencies = [
  "arrayref",
- "arrayvec",
+ "arrayvec 0.5.2",
  "constant_time_eq 0.1.5",
 ]
 
@@ -1446,6 +1452,18 @@ name = "downcast"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
+
+[[package]]
+name = "duration-str"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "027cd1402a609c71a9ac333c7e3d90ee042e7a131da1a83da8c60df323f12f61"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "thiserror 2.0.12",
+ "winnow 0.7.11",
+]
 
 [[package]]
 name = "dyn-clone"
@@ -2976,6 +2994,7 @@ dependencies = [
  "cron",
  "derive_builder",
  "derive_more 0.99.20",
+ "duration-str",
  "figment",
  "figment_file_provider_adapter",
  "futures",
@@ -4288,6 +4307,16 @@ dependencies = [
  "blake2b_simd",
  "constant_time_eq 0.1.5",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rust_decimal"
+version = "1.42.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be2a24f50780bc85f09cc6ac299bdf1424302742d77221106859c9d8b102126a"
+dependencies = [
+ "arrayvec 0.7.8",
+ "num-traits",
 ]
 
 [[package]]

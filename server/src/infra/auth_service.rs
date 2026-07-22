@@ -229,6 +229,18 @@ fn default_hash<T: Hash + ?Sized>(token: &T) -> u64 {
     s.finish()
 }
 
+/// Reads a TTL from the given environment variable, falling back to `default_days` days
+/// when the variable is unset or cannot be parsed.
+///
+/// The value accepts human-friendly durations such as `30s`, `5m`, `1h`, `7d`, `1w`, or
+/// combinations like `1d2h`. A plain integer (no suffix) is interpreted as seconds.
+pub fn ttl_from_env(var_name: &str, default_days: i64) -> chrono::Duration {
+    std::env::var(var_name)
+        .ok()
+        .and_then(|v| duration_str::parse_chrono(&v).ok())
+        .unwrap_or_else(|| chrono::Duration::days(default_days))
+}
+
 async fn create_jwt<Handler: TcpBackendHandler>(
     handler: &Handler,
     key: &Hmac<Sha512>,
@@ -237,7 +249,8 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     mfa: i64,
     jwt_token_expiry_days: i64,
 ) -> SignedToken {
-    let exp_utc = Utc::now() + chrono::Duration::days(jwt_token_expiry_days);
+    // Use ACCESS_TOKEN_TTL if set, otherwise fall back to the configured days.
+    let exp_utc = Utc::now() + ttl_from_env("ACCESS_TOKEN_TTL", jwt_token_expiry_days);
     let claims = JWTClaims {
         exp: exp_utc.timestamp(),
         iat: Utc::now().timestamp(),
