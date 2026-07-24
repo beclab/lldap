@@ -61,7 +61,12 @@ impl TcpBackendHandler for SqlBackendHandler {
             refresh_token.hash(&mut s);
             s.finish()
         };
-        let duration = chrono::Duration::days(jwt_refresh_token_expiry_days);
+        // Use REFRESH_TOKEN_TTL if set (e.g. `30s`, `5m`, `1h`, `7d`), otherwise fall back
+        // to the configured days.
+        let duration = crate::infra::auth_service::ttl_from_env(
+            "REFRESH_TOKEN_TTL",
+            jwt_refresh_token_expiry_days,
+        );
         let new_token = model::jwt_refresh_storage::Model {
             refresh_token_hash: refresh_token_hash as i64,
             user_id: user.clone(),
