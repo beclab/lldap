@@ -50,7 +50,7 @@ impl TcpBackendHandler for SqlBackendHandler {
         user: &UserId,
         mfa: i64,
         jwt_refresh_token_expiry_days: i64,
-    ) -> Result<(String, chrono::Duration)> {
+    ) -> Result<(String, chrono::Duration, u64)> {
         debug!(?user);
         // TODO: Initialize the rng only once. Maybe Arc<Cell>?
         let refresh_token = gen_random_string(100);
@@ -70,7 +70,7 @@ impl TcpBackendHandler for SqlBackendHandler {
         }
         .into_active_model();
         new_token.insert(&self.sql_pool).await?;
-        Ok((refresh_token, duration))
+        Ok((refresh_token, duration, refresh_token_hash))
     }
 
     #[instrument(skip_all, level = "debug")]
@@ -81,6 +81,7 @@ impl TcpBackendHandler for SqlBackendHandler {
         token: &str,
         expiry_date: NaiveDateTime,
         mfa: i64,
+        refresh_token_hash: u64,
     ) -> Result<()> {
         debug!(?user, ?jwt_hash);
         let new_token = model::jwt_storage::Model {
@@ -90,6 +91,7 @@ impl TcpBackendHandler for SqlBackendHandler {
             blacklisted: false,
             expiry_date,
             mfa,
+            refresh_token_hash: refresh_token_hash as i64,
         }
         .into_active_model();
         let existing_hash = model::jwt_storage::Entity::find()
@@ -101,6 +103,14 @@ impl TcpBackendHandler for SqlBackendHandler {
         }
         new_token.insert(&self.sql_pool).await?;
         Ok(())
+    }
+
+    #[instrument(skip_all, level = "debug")]
+    async fn get_jwt_refresh_token_hash(&self, jwt_hash: u64) -> Result<Option<u64>> {
+        Ok(model::jwt_storage::Entity::find_by_id(jwt_hash as i64)
+            .one(&self.sql_pool)
+            .await?
+            .map(|m| m.refresh_token_hash as u64))
     }
 
     #[instrument(skip_all, level = "debug")]
@@ -148,11 +158,21 @@ impl TcpBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug")]
-    async fn delete_refresh_token(&self, refresh_token_hash: u64) -> Result<()> {
-        model::JwtRefreshStorage::delete_by_id(refresh_token_hash as i64)
+    async fn delete_refresh_token(&self, refresh_token_hash: u64) -> Result<u64> {
+        let result = model::JwtRefreshStorage::delete_by_id(refresh_token_hash as i64)
             .exec(&self.sql_pool)
             .await?;
-        Ok(())
+        Ok(result.rows_affected)
+    }
+
+    #[instrument(skip_all, level = "debug")]
+    async fn set_refresh_token_mfa(&self, refresh_token_hash: u64, mfa: i64) -> Result<u64> {
+        let result = model::JwtRefreshStorage::update_many()
+            .col_expr(JwtRefreshStorageColumn::Mfa, Expr::value(mfa))
+            .filter(JwtRefreshStorageColumn::RefreshTokenHash.eq(refresh_token_hash as i64))
+            .exec(&self.sql_pool)
+            .await?;
+        Ok(result.rows_affected)
     }
 
     #[instrument(skip_all, level = "debug")]

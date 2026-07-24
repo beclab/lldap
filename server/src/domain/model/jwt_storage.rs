@@ -15,6 +15,7 @@ pub struct Model {
     pub expiry_date: chrono::NaiveDateTime,
     pub blacklisted: bool,
     pub mfa: i64,
+    pub refresh_token_hash: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

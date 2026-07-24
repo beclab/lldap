@@ -77,6 +77,8 @@ pub mod login {
     #[derive(Serialize, Deserialize, Clone)]
     pub struct TokenInvalidateRequest {
         pub access_token: String,
+        #[serde(default)]
+        pub revoke_refresh_token: bool,
     }
 }
 

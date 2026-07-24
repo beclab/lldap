@@ -25,6 +25,7 @@ pub enum JwtStorage {
     ExpiryDate,
     Blacklisted,
     Mfa,
+    RefreshTokenHash,
 }
 
 /// Contains the temporary tokens to reset the password, sent by email.

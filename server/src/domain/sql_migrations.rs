@@ -1265,6 +1265,28 @@ async fn migrate_to_v13(transaction: DatabaseTransaction) -> Result<DatabaseTran
     Ok(transaction)
 }
 
+// Bind each access token to the refresh token it was derived from by storing
+// the refresh token's `refresh_token_hash` alongside it in `jwt_storage`. A
+// value of 0 means "no binding" (e.g. password-reset tokens).
+async fn migrate_to_v14(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
+    let builder = transaction.get_database_backend();
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtStorage::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(JwtStorage::RefreshTokenHash)
+                            .big_integer()
+                            .not_null()
+                            .default(0),
+                    ),
+            ),
+        )
+        .await?;
+    Ok(transaction)
+}
+
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
     ($l:ident) => {
@@ -1298,6 +1320,7 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v11),
         to_sync!(migrate_to_v12),
         to_sync!(migrate_to_v13),
+        to_sync!(migrate_to_v14),
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

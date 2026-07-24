@@ -235,6 +235,7 @@ async fn create_jwt<Handler: TcpBackendHandler>(
     user: &UserId,
     groups: HashSet<GroupDetails>,
     mfa: i64,
+    refresh_token_hash: u64,
     jwt_token_expiry_days: i64,
 ) -> SignedToken {
     let exp_utc = Utc::now() + chrono::Duration::days(jwt_token_expiry_days);
@@ -262,10 +263,95 @@ async fn create_jwt<Handler: TcpBackendHandler>(
             token.as_str(),
             expiry,
             mfa,
+            refresh_token_hash,
         )
         .await
         .unwrap();
     token
+}
+
+/// Issue an MFA-verified (mfa=1) access token, reusing the refresh token that
+/// the presented (Bearer) access token is bound to instead of creating a new
+/// one. Used by both `/totp/verify` and `get_sign_token`.
+///
+/// It reads the bound `refresh_token_hash` for `auth_header` from `jwt_storage`:
+/// if that refresh token still exists, its mfa is upgraded to 1 and the client
+/// keeps using the refresh token it already holds. Otherwise (no binding or the
+/// refresh token was revoked) it falls back to creating a fresh refresh token.
+async fn issue_mfa_login_response_reusing_refresh<Backend>(
+    data: &web::Data<AppState<Backend>>,
+    auth_header: &str,
+    user_id: &UserId,
+    groups: HashSet<GroupDetails>,
+    caller: &str,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    // The bound refresh token is not carried in the JWT claims; the access
+    // token's `refresh_token_hash` is stored in `jwt_storage` and looked up by
+    // the token's hash.
+    let bound_refresh_token_hash = data
+        .get_tcp_handler()
+        .get_jwt_refresh_token_hash(default_hash(auth_header))
+        .await?
+        .unwrap_or(0);
+
+    // Decide whether to reuse by checking (without mutating) whether the bound
+    // refresh token still exists, so that a failure while signing the token
+    // can't leave the row prematurely flipped to mfa=1.
+    let reused = if bound_refresh_token_hash != 0 {
+        data.get_tcp_handler()
+            .check_refresh_token(bound_refresh_token_hash, user_id)
+            .await?
+            .0
+    } else {
+        false
+    };
+
+    if reused {
+        // Sign the MFA-verified access token first; only after it is issued do we
+        // upgrade the bound refresh row to mfa=1, keeping the DB consistent if an
+        // earlier step fails.
+        let token = create_jwt(
+            data.get_tcp_handler(),
+            &data.jwt_key,
+            user_id,
+            groups,
+            1,
+            bound_refresh_token_hash,
+            data.jwt_token_expiry_days,
+        )
+        .await;
+        let rows_updated = data
+            .get_tcp_handler()
+            .set_refresh_token_mfa(bound_refresh_token_hash, 1)
+            .await?;
+        // The refresh token plaintext is not stored, so we can't hand the same
+        // one back; the client keeps using the refresh token it already holds
+        // (its row was just upgraded to mfa=1).
+        info!(
+            "{}: reused refresh token, rows_updated={}",
+            caller, rows_updated
+        );
+        Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
+            token: token.as_str().to_owned(),
+            refresh_token: None,
+        }))
+    } else {
+        // No refresh token to reuse: the presented access token has no binding,
+        // or its bound refresh token no longer exists (revoked/expired). Fail
+        // instead of silently minting a new refresh token.
+        errorf!(
+            "{}: no bound refresh token found (refresh_token_hash={}, as i64={})",
+            caller,
+            bound_refresh_token_hash,
+            bound_refresh_token_hash as i64
+        );
+        Err(TcpError::UnauthorizedError(
+            "No refresh token bound to this access token".to_string(),
+        ))
+    }
 }
 
 fn parse_refresh_token(token: &str) -> TcpResult<(u64, UserId)> {
@@ -365,6 +451,7 @@ where
         &user,
         groups,
         mfa,
+        refresh_token_hash,
         data.jwt_token_expiry_days,
     )
     .await;
@@ -497,6 +584,7 @@ where
         &data.jwt_key,
         &user_id,
         groups,
+        0,
         0,
         data.jwt_token_expiry_days,
     )
@@ -781,25 +869,8 @@ where
         .get_user_groups(&user_id)
         .await?;
 
-    let (refresh_token, max_age) = data
-        .get_tcp_handler()
-        .create_refresh_token(&user_id, 1, data.jwt_refresh_token_expiry_days)
-        .await?;
-    let token = create_jwt(
-        data.get_tcp_handler(),
-        &data.jwt_key,
-        &user_id,
-        groups,
-        1,
-        data.jwt_token_expiry_days,
-    )
-    .await;
-    let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
-
-    Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
-        token: token.as_str().to_owned(),
-        refresh_token: Some(refresh_token_plus_name),
-    }))
+    issue_mfa_login_response_reusing_refresh(&data, auth_header, user_id, groups, "totp_verify")
+        .await
 }
 
 async fn get_sign_token_handler<Backend>(
@@ -841,25 +912,8 @@ where
         .get_user_groups(&user_id)
         .await?;
 
-    let (refresh_token, max_age) = data
-        .get_tcp_handler()
-        .create_refresh_token(&user_id, 1, data.jwt_refresh_token_expiry_days)
-        .await?;
-    let token = create_jwt(
-        data.get_tcp_handler(),
-        &data.jwt_key,
-        &user_id,
-        groups,
-        1,
-        data.jwt_token_expiry_days,
-    )
-    .await;
-    let refresh_token_plus_name = refresh_token + "+" + user_id.as_str();
-
-    Ok(HttpResponse::Ok().json(&login::ServerLoginResponse {
-        token: token.as_str().to_owned(),
-        refresh_token: Some(refresh_token_plus_name),
-    }))
+    issue_mfa_login_response_reusing_refresh(&data, auth_header, user_id, groups, "get_sign_token")
+        .await
 }
 
 #[instrument(skip_all, level = "debug")]
@@ -947,7 +1001,7 @@ where
     // The authentication was successful, we need to fetch the groups to create the JWT
     // token.
     let groups = data.get_readonly_handler().get_user_groups(name).await?;
-    let (refresh_token, max_age) = data
+    let (refresh_token, max_age, refresh_token_hash) = data
         .get_tcp_handler()
         .create_refresh_token(name, 0, data.jwt_refresh_token_expiry_days)
         .await?;
@@ -957,6 +1011,7 @@ where
         name,
         groups,
         0,
+        refresh_token_hash,
         data.jwt_token_expiry_days,
     )
     .await;
@@ -1420,9 +1475,44 @@ async fn access_token_invalidate<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
-    let login::TokenInvalidateRequest { access_token } = request.into_inner();
+    let login::TokenInvalidateRequest {
+        access_token,
+        revoke_refresh_token,
+    } = request.into_inner();
+
     let token: Token<_> = VerifyWithKey::verify_with_key(access_token.as_str(), &data.jwt_key)
         .map_err(|_| anyhow!("access_token invalidate invalid JWT"))?;
+    // The bound refresh token's hash is stored in `jwt_storage` (keyed by the
+    // access token hash), not in the JWT claims; look it up. Absent row => 0
+    // (no binding / already invalidated).
+    let jwt_hash = default_hash(&access_token);
+    let refresh_token_hash = data
+        .get_tcp_handler()
+        .get_jwt_refresh_token_hash(jwt_hash)
+        .await?
+        .unwrap_or(0);
+
+    if revoke_refresh_token {
+        // refresh_token_hash == 0 means "no binding" (password-reset tokens,
+        // tokens issued before this feature); skip to avoid deleting nothing.
+        if refresh_token_hash != 0 {
+            let rows_deleted = data
+                .get_tcp_handler()
+                .delete_refresh_token(refresh_token_hash)
+                .await?;
+            info!(
+                "access_token_invalidate: delete_refresh_token ok, rows_deleted={}, existed_in_db={}",
+                rows_deleted,
+                rows_deleted > 0
+            );
+        } else {
+            info!(
+                "access_token_invalidate: refresh_token_hash=0 (no binding), skip deleting refresh_token"
+            );
+        }
+    } else {
+        info!("access_token_invalidate: revoke_refresh_token=false, refresh_token kept");
+    }
 
     let naive_datetime: NaiveDateTime = NaiveDateTime::from_timestamp_opt(token.claims().exp, 0)
         .ok_or_else(|| anyhow!("Invalid expiration time"))?;
@@ -1431,7 +1521,6 @@ where
         return Ok(HttpResponse::Ok().finish());
     }
 
-    let jwt_hash = default_hash(&access_token);
     if data.jwt_blacklist.read().unwrap().contains(&jwt_hash) {
         return Ok(HttpResponse::Ok().finish());
     }
