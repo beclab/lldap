@@ -111,6 +111,12 @@ pub struct Configuration {
     pub jwt_token_expiry_days: i64,
     #[builder(default = "30")]
     pub jwt_refresh_token_expiry_days: i64,
+    /// Ceiling on the lifetime `/auth/token/derive` will grant, in days.
+    /// Defaults to ten years, matching what app credentials ask for; a
+    /// deployment that considers that too long can lower it without touching
+    /// the callers, who get their request clamped rather than rejected.
+    #[builder(default = "3650")]
+    pub max_derived_token_expiry_days: i64,
 
     #[builder(default)]
     pub ignored_user_attributes: Vec<AttributeName>,

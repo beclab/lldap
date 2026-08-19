@@ -115,6 +115,7 @@ fn http_config<Backend>(
     mail_options: MailOptions,
     jwt_token_expiry_days: i64,
     jwt_refresh_token_expiry_days: i64,
+    max_derived_token_expiry_days: i64,
 ) where
     Backend: TcpBackendHandler + BackendHandler + LoginHandler + OpaqueHandler + Clone + 'static,
 {
@@ -127,6 +128,7 @@ fn http_config<Backend>(
         mail_options,
         jwt_token_expiry_days,
         jwt_refresh_token_expiry_days,
+        max_derived_token_expiry_days,
     }))
     .route(
         "/health",
@@ -165,6 +167,7 @@ pub(crate) struct AppState<Backend> {
     pub mail_options: MailOptions,
     pub jwt_token_expiry_days: i64,
     pub jwt_refresh_token_expiry_days: i64,
+    pub max_derived_token_expiry_days: i64,
 }
 
 impl<Backend: BackendHandler> AppState<Backend> {
@@ -205,6 +208,7 @@ where
     let mail_options = config.smtp_options.clone();
     let jwt_token_expiry_days = config.jwt_token_expiry_days;
     let jwt_refresh_token_expiry_days = config.jwt_refresh_token_expiry_days;
+    let max_derived_token_expiry_days = config.max_derived_token_expiry_days;
     let verbose = config.verbose;
     info!("Starting the API/web server on port {}", config.http_port);
     server_builder
@@ -234,6 +238,7 @@ where
                                     mail_options,
                                     jwt_token_expiry_days,
                                     jwt_refresh_token_expiry_days,
+                                    max_derived_token_expiry_days,
                                 )
                             }),
                         |_| AppConfig::default(),

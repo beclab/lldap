@@ -13,6 +13,13 @@ pub struct Model {
     pub user_id: UserId,
     pub expiry_date: chrono::NaiveDateTime,
     pub mfa: i64,
+    /// What minted this refresh token: "session" for an interactive login,
+    /// "app-cli" for a credential derived for an app. Kinds other than
+    /// "session" are revoked individually rather than with the user's other
+    /// sessions.
+    pub kind: String,
+    /// Free-form provenance for non-session kinds, e.g. "app:lares:alice".
+    pub label: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
