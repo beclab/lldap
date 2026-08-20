@@ -80,6 +80,43 @@ pub mod login {
         #[serde(default)]
         pub revoke_refresh_token: bool,
     }
+
+    /// Ask for a long-lived refresh token on behalf of `username`. The caller
+    /// is a platform component authenticated by its Kubernetes ServiceAccount
+    /// token in the `Authorization` header; lldap only honors the request for
+    /// service accounts on its allowlist, the same trust it already extends to
+    /// `/auth/reset/password`.
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct TokenDeriveRequest {
+        /// The user the grant belongs to. Must already exist in lldap.
+        pub username: String,
+        /// Requested lifetime in days, clamped to the server's configured
+        /// maximum.
+        pub ttl_days: i64,
+        /// Provenance recorded on the grant, e.g. "app:lares:alice".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub label: Option<String>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TokenDeriveResponse {
+        /// Ready to use with `/auth/refresh`: already in the wire format
+        /// `{plaintext}+{username}`. The same value is what
+        /// `/auth/token/derive/revoke` expects — the database key is the hash
+        /// of the plaintext half, so there is no separate revocation handle.
+        pub refresh_token: String,
+        pub username: String,
+        /// RFC 3339 timestamp.
+        pub expires_at: String,
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct TokenDeriveRevokeRequest {
+        /// The wire-format refresh token previously returned by derive
+        /// (`{plaintext}+{username}`). Hashed the same way `/auth/refresh`
+        /// does, then used as the primary key to delete the row.
+        pub refresh_token: String,
+    }
 }
 
 /// The messages for the 3-step OPAQUE registration process.

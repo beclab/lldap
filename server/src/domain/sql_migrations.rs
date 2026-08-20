@@ -1287,6 +1287,41 @@ async fn migrate_to_v14(transaction: DatabaseTransaction) -> Result<DatabaseTran
     Ok(transaction)
 }
 
+// Record what minted each refresh token. Existing rows are all interactive
+// logins, so "session" is both the default and the backfill value; app
+// credentials derived through /auth/token/derive carry kind="app-cli" plus a
+// label naming the app and owner, which is what makes them revocable one at a
+// time instead of with the user's whole session set.
+async fn migrate_to_v15(transaction: DatabaseTransaction) -> Result<DatabaseTransaction, DbErr> {
+    let builder = transaction.get_database_backend();
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtRefreshStorage::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(JwtRefreshStorage::Kind)
+                            .string_len(64)
+                            .not_null()
+                            .default("session"),
+                    ),
+            ),
+        )
+        .await?;
+    transaction
+        .execute(
+            builder.build(
+                Table::alter()
+                    .table(JwtRefreshStorage::Table)
+                    .add_column_if_not_exists(
+                        ColumnDef::new(JwtRefreshStorage::Label).string_len(255).null(),
+                    ),
+            ),
+        )
+        .await?;
+    Ok(transaction)
+}
+
 // This is needed to make an array of async functions.
 macro_rules! to_sync {
     ($l:ident) => {
@@ -1321,6 +1356,7 @@ pub async fn migrate_from_version(
         to_sync!(migrate_to_v12),
         to_sync!(migrate_to_v13),
         to_sync!(migrate_to_v14),
+        to_sync!(migrate_to_v15),
     ];
     assert_eq!(migrations.len(), (LAST_SCHEMA_VERSION.0 - 1) as usize);
     for migration in 2..=last_version.0 {

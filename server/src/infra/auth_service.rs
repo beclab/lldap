@@ -34,8 +34,19 @@ macro_rules! errorf {
     };
 }
 
+/// The CLI running on the host, which resets user passwords.
+const SA_OLARES_CLI: &str = "system:serviceaccount:os-framework:olares-cli-sa";
+/// app-service, which derives app credentials on a user's behalf. Holding this
+/// token is enough to mint a decade-long credential for any user, so the entry
+/// names the one namespace app-service is deployed into rather than every
+/// namespace where an `os-internal` account happens to exist.
+const SA_APP_SERVICE: &[&str] = &["system:serviceaccount:os-framework:os-internal"];
+
 #[instrument(skip_all, level = "debug")]
-async fn verify_k8s_service_account(http_request: &HttpRequest) -> TcpResult<()> {
+async fn verify_k8s_service_account(
+    http_request: &HttpRequest,
+    allowed_accounts: &[&str],
+) -> TcpResult<()> {
     let auth_header = http_request
         .headers()
         .get("Authorization")
@@ -78,7 +89,7 @@ async fn verify_k8s_service_account(http_request: &HttpRequest) -> TcpResult<()>
         .user
         .and_then(|u| u.username)
         .ok_or_else(|| TcpError::UnauthorizedError("token user missing".to_owned()))?;
-    if username != "system:serviceaccount:os-framework:olares-cli-sa" {
+    if !allowed_accounts.iter().any(|a| *a == username) {
         return Err(TcpError::UnauthorizedError(format!(
             "token user invalid: {}",
             username
@@ -97,7 +108,7 @@ where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
 {
     use actix_web::FromRequest;
-    if let Err(e) = verify_k8s_service_account(&request).await {
+    if let Err(e) = verify_k8s_service_account(&request, &[SA_OLARES_CLI]).await {
         errorf!("password_reset k8s auth failed: {}", e);
         return Err(e);
     }
@@ -929,6 +940,188 @@ where
         .await
 }
 
+async fn derive_token_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenDeriveRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    derive_token(data, request, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+/// Mint a long-lived refresh token for `username`, on behalf of the platform
+/// component that presented its Kubernetes ServiceAccount token in
+/// `Authorization`.
+///
+/// The caller names the user rather than proving possession of that user's
+/// access token: app-service authenticates its own callers by the `X-Bfl-User`
+/// header the gateway sets and never holds a user's lldap token, and the
+/// grant also has to be re-derivable from background paths (install retries,
+/// upgrades) where no user session exists at all. The trust boundary is
+/// therefore the ServiceAccount allowlist, the same one `/auth/reset/password`
+/// already relies on to change any user's password.
+///
+/// This is the sibling of `get_sign_token`: that one deliberately *reuses* the
+/// refresh token already bound to a session (and refuses when there is none),
+/// whereas this always mints a new, separately revocable one. They are
+/// separate functions rather than one with a flag because that difference is
+/// the whole point of each.
+///
+/// No access token is signed here. The grant is written to a Secret and
+/// mounted into app containers, and an access token expires in a day, so
+/// shipping one alongside would only invite consumers to use a credential that
+/// is stale by the time they read it. Holders exchange the refresh token at
+/// `/auth/refresh` when they need a ticket.
+#[instrument(skip_all, level = "debug")]
+async fn derive_token<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenDeriveRequest>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    if let Err(e) = verify_k8s_service_account(&http_request, SA_APP_SERVICE).await {
+        errorf!("derive_token k8s auth failed: {}", e);
+        return Err(e);
+    }
+
+    let login::TokenDeriveRequest {
+        username,
+        ttl_days,
+        label,
+    } = request.into_inner();
+
+    if ttl_days <= 0 {
+        return Err(TcpError::BadRequest(
+            "ttl_days must be positive".to_string(),
+        ));
+    }
+
+    let user_id = UserId::new(&username);
+    let users = data
+        .get_readonly_handler()
+        .list_users(Some(UserRequestFilter::UserId(user_id.clone())), false)
+        .await?;
+    if users.is_empty() {
+        errorf!("derive_token: user {} is not found", user_id.as_str());
+        return Err(TcpError::NotFoundError(format!(
+            "User '{}' not found",
+            user_id.as_str()
+        )));
+    }
+
+    let granted_days = std::cmp::min(ttl_days, data.max_derived_token_expiry_days);
+    let duration = chrono::Duration::days(granted_days);
+
+    // mfa=1: access tokens refreshed from this grant have to be accepted
+    // wherever the owner's own session tokens are, and users on the
+    // two_factor policy would see mfa=0 tokens rejected at the edge. The
+    // second factor is not skipped so much as moved: the grant only comes into
+    // existence through an authenticated install performed by the owner.
+    const DERIVED_TOKEN_MFA: i64 = 1;
+
+    // Deliberately not create_refresh_token: that one lets REFRESH_TOKEN_TTL
+    // override the lifetime, which would silently clamp this grant.
+    let (refresh_token, duration, _) = data
+        .get_tcp_handler()
+        .create_refresh_token_with(
+            &user_id,
+            DERIVED_TOKEN_MFA,
+            duration,
+            REFRESH_TOKEN_KIND_APP_CLI,
+            label.as_deref(),
+        )
+        .await?;
+
+    info!(
+        "derived {}-day token for user {} (label={:?})",
+        granted_days,
+        user_id.as_str(),
+        label
+    );
+
+    Ok(HttpResponse::Ok().json(&login::TokenDeriveResponse {
+        // The wire format /auth/refresh expects, so callers don't reassemble it.
+        // Revocation hashes the same string, so no separate token_id is needed.
+        refresh_token: format!("{}+{}", refresh_token, user_id.as_str()),
+        username: user_id.to_string(),
+        expires_at: (Utc::now() + duration).to_rfc3339(),
+    }))
+}
+
+async fn derive_token_revoke_handler<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenDeriveRevokeRequest>,
+    http_request: HttpRequest,
+) -> HttpResponse
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    derive_token_revoke(data, request, http_request)
+        .await
+        .unwrap_or_else(error_to_http_response)
+}
+
+/// Revoke one derived grant: drop its refresh-token row and blacklist the
+/// access tokens issued from it.
+///
+/// Revocation is scoped to the grant, never to the user. Uninstalling an app
+/// must not sign its owner out of their browser, their other apps, or
+/// TermiPass, which is exactly what the user-wide `blacklist_jwts` would do.
+///
+/// Idempotent: revoking an already-revoked (or never-existing) grant is a 200
+/// with `deleted: 0`, so callers on a retry path don't have to special-case it.
+#[instrument(skip_all, level = "debug")]
+async fn derive_token_revoke<Backend>(
+    data: web::Data<AppState<Backend>>,
+    request: web::Json<login::TokenDeriveRevokeRequest>,
+    http_request: HttpRequest,
+) -> TcpResult<HttpResponse>
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    if let Err(e) = verify_k8s_service_account(&http_request, SA_APP_SERVICE).await {
+        errorf!("derive_token_revoke k8s auth failed: {}", e);
+        return Err(e);
+    }
+
+    let refresh_token = request.into_inner().refresh_token;
+    // Same parsing /auth/refresh uses: hash the plaintext half. A mangled
+    // token is a bad request, not a silent miss — callers should not guess.
+    let (token_hash, _) = parse_refresh_token(&refresh_token)?;
+
+    let deleted = data
+        .get_tcp_handler()
+        .delete_refresh_token(token_hash)
+        .await?;
+    let newly_blacklisted = data
+        .get_tcp_handler()
+        .blacklist_jwts_by_refresh_token(token_hash)
+        .await?;
+    {
+        let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
+        for jwt_hash in &newly_blacklisted {
+            jwt_blacklist.insert(*jwt_hash);
+        }
+    }
+
+    info!(
+        "revoked derived token {}: deleted={}, blacklisted={}",
+        token_hash,
+        deleted,
+        newly_blacklisted.len()
+    );
+    Ok(HttpResponse::Ok().json(json!({
+        "deleted": deleted,
+        "blacklisted": newly_blacklisted.len(),
+    })))
+}
+
 #[instrument(skip_all, level = "debug")]
 async fn get_logout<Backend>(
     data: web::Data<AppState<Backend>>,
@@ -938,10 +1131,16 @@ where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
     let (refresh_token_hash, user) = get_refresh_token(request)?;
+    // Browser logout must not tear down an app-cli grant: the refresh token
+    // stays in the app's Secret, and access tokens already exchanged from it
+    // must keep working until the app is uninstalled.
     data.get_tcp_handler()
-        .delete_refresh_token(refresh_token_hash)
+        .delete_refresh_token_unless_kind(refresh_token_hash, REFRESH_TOKEN_KIND_APP_CLI)
         .await?;
-    let new_blacklisted_jwt_hashes = data.get_tcp_handler().blacklist_jwts(&user).await?;
+    let new_blacklisted_jwt_hashes = data
+        .get_tcp_handler()
+        .blacklist_jwts_except_kind(&user, REFRESH_TOKEN_KIND_APP_CLI)
+        .await?;
     let mut jwt_blacklist = data.jwt_blacklist.write().unwrap();
     for jwt_hash in new_blacklisted_jwt_hashes {
         jwt_blacklist.insert(jwt_hash);
@@ -1731,6 +1930,13 @@ where
         .service(
             web::resource("/token/invalidate")
                 .route(web::post().to(access_token_invalidate_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/token/derive").route(web::post().to(derive_token_handler::<Backend>)),
+        )
+        .service(
+            web::resource("/token/derive/revoke")
+                .route(web::post().to(derive_token_revoke_handler::<Backend>)),
         )
         .service(
             web::resource("/revoke/{user}/token")
