@@ -1,4 +1,6 @@
-use super::tcp_backend_handler::{TcpBackendHandler, REFRESH_TOKEN_KIND_SESSION};
+use super::tcp_backend_handler::{
+    TcpBackendHandler, REFRESH_TOKEN_KIND_APP_CLI, REFRESH_TOKEN_KIND_SESSION,
+};
 use crate::domain::types::UserTOTPSecret;
 use crate::domain::{
     error::*,
@@ -415,6 +417,7 @@ impl TcpBackendHandler for SqlBackendHandler {
     async fn delete_refresh_token_by_user(&self, user: &UserId) -> Result<()> {
         model::JwtRefreshStorage::delete_many()
             .filter(JwtRefreshStorageColumn::UserId.eq(user.clone()))
+            .filter(JwtRefreshStorageColumn::Kind.ne(REFRESH_TOKEN_KIND_APP_CLI))
             .exec(&self.sql_pool)
             .await?;
         Ok(())
@@ -671,6 +674,44 @@ mod tests {
             !stored.contains(&grant_jwt),
             "logout must not blacklist access tokens issued from an app-cli grant"
         );
+        assert_eq!(
+            handler.check_refresh_token(grant_hash, &user).await.unwrap().0,
+            true
+        );
+    }
+
+    /// Password reset / simple-register / admin revoke wipe the user's
+    /// sessions but must leave app-cli grants in place (those are revoked only
+    /// by `/auth/token/derive/revoke`).
+    #[tokio::test]
+    #[serial]
+    async fn delete_refresh_token_by_user_spares_app_cli() {
+        let handler = new_handler().await;
+        let user = UserId::new(TEST_USER);
+
+        let (_, _, session_hash) = handler.create_refresh_token(&user, 0, 30).await.unwrap();
+        let (_, _, grant_hash) = handler
+            .create_refresh_token_with(
+                &user,
+                1,
+                Duration::days(3650),
+                REFRESH_TOKEN_KIND_APP_CLI,
+                Some("app:lares:alice"),
+            )
+            .await
+            .unwrap();
+
+        handler.delete_refresh_token_by_user(&user).await.unwrap();
+
+        assert!(
+            model::JwtRefreshStorage::find_by_id(session_hash as i64)
+                .one(&handler.sql_pool)
+                .await
+                .unwrap()
+                .is_none(),
+            "session refresh tokens must be deleted"
+        );
+        refresh_row(&handler, grant_hash).await;
         assert_eq!(
             handler.check_refresh_token(grant_hash, &user).await.unwrap().0,
             true

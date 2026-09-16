@@ -109,6 +109,8 @@ pub trait TcpBackendHandler: Sync {
 
     async fn access_token_list(&self) -> Result<Vec<TokenInfo>>;
 
+    /// Delete this user's refresh tokens except `app-cli` grants. Password
+    /// reset and session revoke must not uninstall derived app credentials.
     async fn delete_refresh_token_by_user(&self, user: &UserId) -> Result<()>;
 
     async fn set_user_initialized(&self, user_id: &UserId) -> Result<()>;
